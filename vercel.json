@@ -1,0 +1,7 @@
+{
+  "buildCommand": "npm run vercel-build",
+  "devCommand": "npm run dev",
+  "framework": "remix",
+  "installCommand": "npm install",
+  "outputDirectory": ".vercel/output"
+}
