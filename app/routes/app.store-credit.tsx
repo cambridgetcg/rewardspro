@@ -42,7 +42,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const customerId = formData.get("customerId") as string;
   const amount = parseFloat(formData.get("amount") as string);
-  const currency = formData.get("currency") as string || "GBP";
+  const currency = formData.get("currency") as string || "USD";
   
   if (!customerId || !amount) {
     return json({ 
@@ -142,12 +142,7 @@ export default function StoreCreditTest() {
   
   const [customerId, setCustomerId] = useState("");
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("GBP");
-
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    // Let Remix handle the form submission, but ensure state is preserved
-    // The form data will be sent via FormData, not the React state
-  };
+  const [currency, setCurrency] = useState("USD");
   
   return (
     <Page title="Store Credit Test">
@@ -180,7 +175,7 @@ export default function StoreCreditTest() {
                 </Banner>
               )}
               
-              <Form method="post" onSubmit={handleSubmit}>
+              <Form method="post">
                 <FormLayout>
                   <TextField
                     label="Customer ID (Shopify ID without gid://)"
@@ -190,7 +185,7 @@ export default function StoreCreditTest() {
                     placeholder="e.g., 7456532553044"
                     helpText="Enter the numeric customer ID from Shopify"
                     value={customerId}
-                    onChange={setCustomerId}
+                    onChange={(value) => setCustomerId(value)}
                   />
                   
                   <InlineGrid columns={2} gap="400">
@@ -203,7 +198,7 @@ export default function StoreCreditTest() {
                       autoComplete="off"
                       placeholder="10.00"
                       value={amount}
-                      onChange={setAmount}
+                      onChange={(value) => setAmount(value)}
                     />
                     
                     <TextField
@@ -212,8 +207,8 @@ export default function StoreCreditTest() {
                       type="text"
                       autoComplete="off"
                       value={currency}
-                      onChange={setCurrency}
-                      placeholder="GBP"
+                      onChange={(value) => setCurrency(value)}
+                      placeholder="USD"
                     />
                   </InlineGrid>
                   
@@ -244,7 +239,7 @@ export default function StoreCreditTest() {
                           Shopify ID: {customer.shopifyCustomerId}
                         </Text>
                         <Text variant="bodySm" as="p">
-                          Database Credit: £{customer.storeCredit.toFixed(2)}
+                          Database Credit: ${customer.storeCredit.toFixed(2)}
                         </Text>
                       </BlockStack>
                     </Box>
