@@ -54,22 +54,24 @@ model Customer {
 }
 
 model CashbackTransaction {
-  id                String      @id @default(uuid())
-  customerId        String
-  shopifyOrderId    String      @unique
-  orderAmount       Float
-  cashbackAmount    Float
-  cashbackPercent   Float
-  status            TransactionStatus @default(COMPLETED)
-  createdAt         DateTime    @default(now())
+  id                    String      @id @default(uuid())
+  customerId            String
+  shopifyOrderId        String      @unique
+  orderAmount           Float
+  cashbackAmount        Float
+  cashbackPercent       Float
+  status                TransactionStatus @default(COMPLETED)
+  shopifyTransactionId  String?     // NEW: Store the Shopify store credit transaction ID
+  createdAt             DateTime    @default(now())
   
   // Relations
-  customer          Customer    @relation(fields: [customerId], references: [id])
+  customer              Customer    @relation(fields: [customerId], references: [id])
   
   // Add indexes for common queries
   @@index([customerId])
   @@index([createdAt])
   @@index([status])
+  @@index([shopifyTransactionId]) // NEW: Index for Shopify transaction lookups
 }
 
 // New model for tracking redemptions
@@ -97,6 +99,8 @@ enum TransactionStatus {
   COMPLETED
   CANCELLED
   REFUNDED
+  SYNCED_TO_SHOPIFY     // NEW: For tracking Shopify sync status
+  SHOPIFY_SYNC_FAILED   // NEW: For failed Shopify syncs
 }
 
 enum RedemptionMethod {
