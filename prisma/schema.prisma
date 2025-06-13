@@ -1,5 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,8 +9,8 @@ generator client {
 // enough when changing adapters.
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "postgresql"  // Changed from "sqlite" to "postgresql"
-  url      = env("DATABASE_URL")  // Changed to use environment variable
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Session {
@@ -28,6 +29,10 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
+  
+  // Add indexes for better query performance
+  @@index([shop])
+  @@index([expires])
 }
 
 model Customer {
@@ -39,7 +44,13 @@ model Customer {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   
+  // Relations
   transactions      CashbackTransaction[]
+  redemptions       Redemption[]
+  
+  // Add indexes for common queries
+  @@index([email])
+  @@index([shopifyCustomerId])
 }
 
 model CashbackTransaction {
@@ -49,8 +60,55 @@ model CashbackTransaction {
   orderAmount       Float
   cashbackAmount    Float
   cashbackPercent   Float
-  status            String      @default("completed")
+  status            TransactionStatus @default(COMPLETED)
   createdAt         DateTime    @default(now())
   
+  // Relations
   customer          Customer    @relation(fields: [customerId], references: [id])
+  
+  // Add indexes for common queries
+  @@index([customerId])
+  @@index([createdAt])
+  @@index([status])
+}
+
+// New model for tracking redemptions
+model Redemption {
+  id                String      @id @default(uuid())
+  customerId        String
+  amount            Float
+  method            RedemptionMethod
+  referenceId       String?     // Discount code or order ID
+  status            RedemptionStatus @default(PENDING)
+  createdAt         DateTime    @default(now())
+  processedAt       DateTime?
+  
+  // Relations
+  customer          Customer    @relation(fields: [customerId], references: [id])
+  
+  // Indexes
+  @@index([customerId])
+  @@index([status])
+}
+
+// Enums for better type safety
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum RedemptionMethod {
+  DISCOUNT_CODE
+  STORE_CREDIT
+  GIFT_CARD
+  MANUAL
+}
+
+enum RedemptionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
 }
