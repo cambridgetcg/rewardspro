@@ -80,63 +80,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       })
     ]);
     
-    console.log(`✅ Cashback credited!`);
+    console.log(`✅ Cashback credited in database!`);
     console.log(`   Customer: ${customerEmail}`);
     console.log(`   New balance: $${updatedCustomer.storeCredit}`);
     console.log(`   Total earned: $${updatedCustomer.totalEarned}`);
     
-    // Optional: Update customer metafield in Shopify using GraphQL
-    if (admin) {
-      try {
-        const response = await admin.graphql(
-          `#graphql
-          mutation customerUpdate($input: CustomerInput!) {
-            customerUpdate(input: $input) {
-              customer {
-                id
-                metafields(first: 1, namespace: "rewardspro", keys: "store_credit") {
-                  edges {
-                    node {
-                      id
-                      value
-                    }
-                  }
-                }
-              }
-              userErrors {
-                field
-                message
-              }
-            }
-          }`,
-          {
-            variables: {
-              input: {
-                id: `gid://shopify/Customer/${customerId}`,
-                metafields: [
-                  {
-                    namespace: "rewardspro",
-                    key: "store_credit",
-                    value: updatedCustomer.storeCredit.toString(),
-                    type: "number_decimal"
-                  }
-                ]
-              }
-            }
-          }
-        );
-        
-        const result = await response.json();
-        if (result.data?.customerUpdate?.userErrors?.length > 0) {
-          console.error("GraphQL errors:", result.data.customerUpdate.userErrors);
-        } else {
-          console.log("Updated Shopify metafield");
-        }
-      } catch (error) {
-        console.error("Failed to update metafield:", error);
-        // Don't fail the webhook if metafield update fails
-      }
-    }
+    // For now, skip the Shopify store credit update
+    // TODO: Add store credit integration after testing
+    console.log("Note: Store credit in Shopify not implemented yet");
     
     return new Response("OK", { status: 200 });
   } catch (error) {
