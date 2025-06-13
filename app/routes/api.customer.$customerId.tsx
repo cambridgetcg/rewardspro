@@ -1,18 +1,14 @@
 // app/routes/api.customer.$customerId.tsx
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
+import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  // Add CORS headers for public API
-  const headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  };
-
+  const { session, cors } = await authenticate.public(request);
+  
   if (!params.customerId) {
-    return json({ error: "Customer ID required" }, { status: 400, headers });
+    return cors(json({ error: "Customer ID required" }, { status: 400 }));
   }
 
   try {
@@ -27,14 +23,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
 
     if (!customer) {
-      return json({
-        storeCredit: 0,
-        totalEarned: 0,
-        transactions: []
-      }, { headers });
+      return cors(json({ 
+        storeCredit: 0, 
+        totalEarned: 0, 
+        transactions: [] 
+      }));
     }
 
-    return json({
+    return cors(json({
       storeCredit: customer.storeCredit,
       totalEarned: customer.totalEarned,
       transactions: customer.transactions.map(t => ({
@@ -43,26 +39,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         cashbackAmount: t.cashbackAmount,
         date: t.createdAt
       }))
-    }, { headers });
-
+    }));
   } catch (error) {
     console.error("Error fetching customer data:", error);
-    return json({ error: "Internal server error" }, { status: 500, headers });
+    return cors(json({ error: "Internal server error" }, { status: 500 }));
   }
-};
-
-// Handle OPTIONS requests for CORS
-export const action = async ({ request }: LoaderFunctionArgs) => {
-  if (request.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      },
-    });
-  }
-  
-  return json({ error: "Method not allowed" }, { status: 405 });
 };
