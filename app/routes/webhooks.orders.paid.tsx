@@ -125,7 +125,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               creditInput: {
                 creditAmount: {
                   amount: cashbackAmount.toFixed(2),
-                  currencyCode: order.currency || "USD"
+                  currencyCode: order.currency || "GBP"
                 }
               }
             }
