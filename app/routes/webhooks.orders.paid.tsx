@@ -85,9 +85,76 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log(`   New balance: $${updatedCustomer.storeCredit}`);
     console.log(`   Total earned: $${updatedCustomer.totalEarned}`);
     
-    // For now, skip the Shopify store credit update
-    // TODO: Add store credit integration after testing
-    console.log("Note: Store credit in Shopify not implemented yet");
+    // Issue store credit in Shopify
+    if (admin && updatedCustomer) {
+      console.log("Attempting to issue store credit in Shopify...");
+      
+      try {
+        const response = await admin.graphql(
+          `#graphql
+          mutation storeCreditAccountCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
+            storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
+              storeCreditAccountTransaction {
+                id
+                amount {
+                  amount
+                  currencyCode
+                }
+                balanceAfterTransaction {
+                  amount
+                  currencyCode
+                }
+                account {
+                  id
+                  balance {
+                    amount
+                    currencyCode
+                  }
+                }
+              }
+              userErrors {
+                field
+                message
+                code
+              }
+            }
+          }`,
+          {
+            variables: {
+              id: `gid://shopify/Customer/${customerId}`,
+              creditInput: {
+                creditAmount: {
+                  amount: cashbackAmount.toFixed(2),
+                  currencyCode: order.currency || "USD"
+                }
+              }
+            }
+          }
+        );
+        
+        const result = await response.json();
+        
+        if (result.data?.storeCreditAccountCredit?.userErrors?.length > 0) {
+          const errors = result.data.storeCreditAccountCredit.userErrors;
+          console.error("Store credit errors:", errors);
+          
+          // Check for specific error codes
+          if (errors.some((e: any) => e.code === "INVALID_PERMISSIONS")) {
+            console.error("Missing permission: write_store_credit_account_transactions");
+            console.error("Please reinstall the app with the correct scope");
+          }
+        } else if (result.data?.storeCreditAccountCredit?.storeCreditAccountTransaction) {
+          const transaction = result.data.storeCreditAccountCredit.storeCreditAccountTransaction;
+          console.log("✅ Store credit issued successfully!");
+          console.log(`   Transaction ID: ${transaction.id}`);
+          console.log(`   Amount: ${transaction.amount.amount} ${transaction.amount.currencyCode}`);
+          console.log(`   New balance: ${transaction.balanceAfterTransaction.amount} ${transaction.balanceAfterTransaction.currencyCode}`);
+        }
+      } catch (error) {
+        console.error("Failed to issue store credit:", error);
+        // Don't fail the webhook - cashback is still recorded in database
+      }
+    }
     
     return new Response("OK", { status: 200 });
   } catch (error) {
