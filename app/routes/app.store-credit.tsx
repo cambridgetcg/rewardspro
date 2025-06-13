@@ -42,7 +42,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const customerId = formData.get("customerId") as string;
   const amount = parseFloat(formData.get("amount") as string);
-  const currency = formData.get("currency") as string || "USD";
+  const currency = formData.get("currency") as string || "GBP";
   
   if (!customerId || !amount) {
     return json({ 
@@ -142,7 +142,7 @@ export default function StoreCreditTest() {
   
   const [customerId, setCustomerId] = useState("");
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState("GBP");
   
   return (
     <Page title="Store Credit Test">
@@ -208,7 +208,7 @@ export default function StoreCreditTest() {
                       autoComplete="off"
                       value={currency}
                       onChange={(value) => setCurrency(value)}
-                      placeholder="USD"
+                      placeholder="GBP"
                     />
                   </InlineGrid>
                   
