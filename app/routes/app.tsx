@@ -25,6 +25,7 @@ export default function App() {
           Home
         </Link>
         <Link to="/app/additional">Additional page</Link>
+        <Link to="/app/store-credit">Test store credit issuance</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>
