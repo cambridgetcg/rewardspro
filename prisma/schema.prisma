@@ -47,6 +47,8 @@ model Customer {
   // Relations
   transactions      CashbackTransaction[]
   redemptions       Redemption[]
+  membershipHistory CustomerMembership[]
+  spendingPeriods   CustomerSpendingPeriod[]
   
   // Add indexes for common queries
   @@index([email])
@@ -61,7 +63,7 @@ model CashbackTransaction {
   cashbackAmount        Float
   cashbackPercent       Float
   status                TransactionStatus @default(COMPLETED)
-  shopifyTransactionId  String?     // NEW: Store the Shopify store credit transaction ID
+  shopifyTransactionId  String?     // Store the Shopify store credit transaction ID
   createdAt             DateTime    @default(now())
   
   // Relations
@@ -71,7 +73,7 @@ model CashbackTransaction {
   @@index([customerId])
   @@index([createdAt])
   @@index([status])
-  @@index([shopifyTransactionId]) // NEW: Index for Shopify transaction lookups
+  @@index([shopifyTransactionId])
 }
 
 // New model for tracking redemptions
@@ -93,14 +95,85 @@ model Redemption {
   @@index([status])
 }
 
+// NEW: Tier definition model
+model Tier {
+  id                String      @id @default(uuid())
+  name              String
+  displayName       String
+  level             Int         @unique // Numeric level for ordering (1, 2, 3, etc.)
+  minSpend          Float?      // Minimum spending required (null for purchased tiers)
+  spendingPeriodDays Int?       // Days to calculate spending (e.g., 365 for annual)
+  cashbackPercent   Float       // Cashback percentage for this tier
+  benefits          Json?       // JSON array of benefit descriptions
+  color             String?     // UI color for the tier
+  icon              String?     // Icon identifier
+  isPurchasable     Boolean     @default(false)
+  purchasePrice     Float?      // Price if purchasable
+  isActive          Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  // Relations
+  customerMemberships CustomerMembership[]
+  
+  // Indexes
+  @@index([level])
+  @@index([isActive])
+}
+
+// NEW: Customer membership tracking
+model CustomerMembership {
+  id                String      @id @default(uuid())
+  customerId        String
+  tierId            String
+  startDate         DateTime    @default(now())
+  endDate           DateTime?   // Null for active memberships
+  source            MembershipSource
+  purchaseOrderId   String?     // If purchased, reference to order
+  isActive          Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  // Relations
+  customer          Customer    @relation(fields: [customerId], references: [id])
+  tier              Tier        @relation(fields: [tierId], references: [id])
+  
+  // Ensure only one active membership per customer
+  @@unique([customerId, isActive])
+  @@index([customerId])
+  @@index([tierId])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+// NEW: Track customer spending over periods
+model CustomerSpendingPeriod {
+  id                String      @id @default(uuid())
+  customerId        String
+  periodStart       DateTime
+  periodEnd         DateTime
+  totalSpent        Float       @default(0)
+  orderCount        Int         @default(0)
+  lastCalculated    DateTime    @default(now())
+  
+  // Relations
+  customer          Customer    @relation(fields: [customerId], references: [id])
+  
+  // Unique constraint to prevent overlapping periods
+  @@unique([customerId, periodStart, periodEnd])
+  @@index([customerId])
+  @@index([periodStart])
+  @@index([periodEnd])
+}
+
 // Enums for better type safety
 enum TransactionStatus {
   PENDING
   COMPLETED
   CANCELLED
   REFUNDED
-  SYNCED_TO_SHOPIFY     // NEW: For tracking Shopify sync status
-  SHOPIFY_SYNC_FAILED   // NEW: For failed Shopify syncs
+  SYNCED_TO_SHOPIFY
+  SHOPIFY_SYNC_FAILED
 }
 
 enum RedemptionMethod {
@@ -115,4 +188,12 @@ enum RedemptionStatus {
   PROCESSING
   COMPLETED
   FAILED
+}
+
+// NEW: Membership source enum
+enum MembershipSource {
+  SPENDING_THRESHOLD  // Earned by spending
+  PURCHASED          // Purchased directly
+  MANUAL_ASSIGNMENT  // Manually assigned by admin
+  PROMOTION         // Given as part of promotion
 }
