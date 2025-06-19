@@ -4,25 +4,22 @@ import { useLoaderData, Link } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { 
   getDashboardMetrics, 
-  getTierDistribution, 
-  getRecentActivity 
+  getTierDistribution
 } from "../services/dashboard.server";
-import { formatDistanceToNow } from "date-fns";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.admin(request);
   
-  const [metrics, tierDistribution, recentActivity] = await Promise.all([
+  const [metrics, tierDistribution] = await Promise.all([
     getDashboardMetrics(),
-    getTierDistribution(),
-    getRecentActivity(10)
+    getTierDistribution()
   ]);
 
-  return json({ metrics, tierDistribution, recentActivity });
+  return json({ metrics, tierDistribution });
 }
 
 export default function Dashboard() {
-  const { metrics, tierDistribution, recentActivity } = useLoaderData<typeof loader>();
+  const { metrics, tierDistribution } = useLoaderData<typeof loader>();
 
   return (
     <div style={{ padding: "20px", maxWidth: "1400px", margin: "0 auto" }}>
@@ -63,8 +60,7 @@ export default function Dashboard() {
         backgroundColor: "white",
         border: "1px solid #e5e5e5",
         borderRadius: "8px",
-        padding: "24px",
-        marginBottom: "32px"
+        padding: "24px"
       }}>
         <h2 style={{ fontSize: "20px", marginBottom: "20px" }}>Customer Distribution</h2>
         
@@ -122,45 +118,6 @@ export default function Dashboard() {
         <p style={{ marginTop: "16px", fontSize: "14px", color: "#666" }}>
           💡 Click any tier segment to see details
         </p>
-      </div>
-
-      {/* Recent Activity */}
-      <div style={{ 
-        backgroundColor: "white",
-        border: "1px solid #e5e5e5",
-        borderRadius: "8px",
-        padding: "24px"
-      }}>
-        <div style={{ 
-          display: "flex", 
-          justifyContent: "space-between", 
-          alignItems: "center",
-          marginBottom: "20px"
-        }}>
-          <h2 style={{ fontSize: "20px", margin: 0 }}>Recent Activity</h2>
-          <Link 
-            to="/app/activity" 
-            style={{ 
-              fontSize: "14px", 
-              color: "#4F46E5",
-              textDecoration: "none"
-            }}
-          >
-            View All
-          </Link>
-        </div>
-        
-        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-          {recentActivity.length === 0 ? (
-            <p style={{ color: "#666", textAlign: "center", padding: "20px" }}>
-              No recent activity
-            </p>
-          ) : (
-            recentActivity.map((activity) => (
-              <ActivityItem key={activity.id} activity={activity} />
-            ))
-          )}
-        </div>
       </div>
     </div>
   );
@@ -220,41 +177,6 @@ function MetricCard({
           {change >= 0 ? "↑" : "↓"} {Math.abs(change)}% {changeLabel}
         </p>
       )}
-    </div>
-  );
-}
-
-// Activity Item Component
-function ActivityItem({ activity }: { activity: any }) {
-  const getActivityIcon = () => {
-    switch (activity.type) {
-      case 'tier_upgrade':
-        return '🎉';
-      case 'cashback_earned':
-        return '💰';
-      case 'new_customer':
-        return '👋';
-      default:
-        return '📊';
-    }
-  };
-
-  return (
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      gap: "12px",
-      padding: "12px",
-      backgroundColor: "#f9f9f9",
-      borderRadius: "6px"
-    }}>
-      <span style={{ fontSize: "20px" }}>{getActivityIcon()}</span>
-      <div style={{ flex: 1 }}>
-        <p style={{ margin: 0, fontSize: "14px" }}>{activity.message}</p>
-      </div>
-      <span style={{ fontSize: "12px", color: "#666" }}>
-        {formatDistanceToNow(new Date(activity.timestamp), { addSuffix: true })}
-      </span>
     </div>
   );
 }
