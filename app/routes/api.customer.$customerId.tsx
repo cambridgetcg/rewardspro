@@ -1,4 +1,3 @@
-// app/routes/api.customer.$customerId.tsx
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
@@ -18,6 +17,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         transactions: {
           orderBy: { createdAt: 'desc' },
           take: 10
+        },
+        membershipHistory: {
+          where: { isActive: true },
+          include: { tier: true },
+          take: 1
         }
       }
     });
@@ -26,13 +30,41 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       return cors(json({ 
         storeCredit: 0, 
         totalEarned: 0, 
-        transactions: [] 
+        transactions: [],
+        tier: {
+          id: 'default',
+          name: 'bronze',
+          displayName: 'Bronze',
+          level: 1,
+          cashbackPercent: 1,
+          color: '#CD7F32'
+        }
       }));
     }
 
+    const activeMembership = customer.membershipHistory[0];
+    const tier = activeMembership?.tier || {
+      id: 'default',
+      name: 'bronze',
+      displayName: 'Bronze',
+      level: 1,
+      cashbackPercent: 1,
+      color: '#CD7F32'
+    };
+
     return cors(json({
+      customerId: customer.shopifyCustomerId,
+      email: customer.email,
       storeCredit: customer.storeCredit,
       totalEarned: customer.totalEarned,
+      tier: {
+        id: tier.id,
+        name: tier.name,
+        displayName: tier.displayName,
+        level: tier.level,
+        cashbackPercent: tier.cashbackPercent,
+        color: tier.color
+      },
       transactions: customer.transactions.map(t => ({
         orderId: t.shopifyOrderId,
         orderAmount: t.orderAmount,

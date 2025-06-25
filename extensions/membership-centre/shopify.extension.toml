@@ -1,0 +1,24 @@
+# Learn more: https://shopify.dev/docs/apps/app-extensions/configuration
+api_version = "2025-01"
+
+[[extensions]]
+type = "customer_account_ui"
+name = "membership-centre"
+handle = "membership-centre"
+
+[[extensions.targeting]]
+module = "customer-account.order-index.block.render"
+target = "customer-account.order-index.block.render"
+
+[[extensions.targeting]]
+module = "customer-account.page.render"
+target = "customer-account.page.render"
+
+[[extensions.targeting]]
+module = "customer-account.profile.block.render"
+target = "customer-account.profile.block.render"
+
+[extensions.capabilities]
+block_progress = false
+network_access = true
+api_access = true
