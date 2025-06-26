@@ -1,0 +1,12 @@
+{
+  "membership": {
+    "title": "My VIP Membership",
+    "tier": "VIP Status",
+    "credit": "Store Credit Balance",
+    "credit_description": "Available to use on your next order",
+    "trigger": "My VIP Status",
+    "view_account": "View Full Account",
+    "loading": "Loading...",
+    "error": "Unable to load data"
+  }
+}
