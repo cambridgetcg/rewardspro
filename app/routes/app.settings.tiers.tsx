@@ -6,9 +6,10 @@ import prisma from "../db.server";
 import { useState } from "react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   
   const tiers = await prisma.tier.findMany({
+    where: { shopDomain: session.shop },
     orderBy: { level: "asc" },
   });
 
@@ -28,38 +29,51 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   
   const formData = await request.formData();
   const action = formData.get("_action");
   
   if (action === "update") {
     const tierId = formData.get("tierId") as string;
-    const spendingDays = formData.get("spendingDays");
+    const minSpend = formData.get("minSpend");
     const cashbackPercent = formData.get("cashbackPercent");
+    const isActive = formData.get("isActive") === "true";
     
     await prisma.tier.update({
-      where: { id: tierId },
+      where: { id: tierId, shopDomain: session.shop },
       data: {
-        spendingPeriodDays: spendingDays ? parseInt(spendingDays as string) : null,
+        minSpend: minSpend ? parseFloat(minSpend as string) : null,
         cashbackPercent: parseFloat(cashbackPercent as string),
+        isActive,
       },
     });
   } else if (action === "create") {
+    const name = formData.get("name") as string;
+    
+    // Check for duplicate name
+    const existingTier = await prisma.tier.findFirst({
+      where: { shopDomain: session.shop, name }
+    });
+    
+    if (existingTier) {
+      return json({ error: "A tier with this name already exists" }, { status: 400 });
+    }
+    
     const maxLevel = await prisma.tier.findFirst({
+      where: { shopDomain: session.shop },
       orderBy: { level: 'desc' },
       select: { level: true }
     });
     
     await prisma.tier.create({
       data: {
-        name: formData.get("name") as string,
-        displayName: formData.get("displayName") as string,
+        shopDomain: session.shop,
+        name,
         level: (maxLevel?.level || 0) + 1,
         minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
-        spendingPeriodDays: formData.get("spendingDays") ? parseInt(formData.get("spendingDays") as string) : null,
         cashbackPercent: parseFloat(formData.get("cashbackPercent") as string),
-        color: formData.get("color") as string,
+        isActive: true,
       },
     });
   } else if (action === "delete") {
@@ -74,8 +88,19 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ error: "Cannot delete tier with active members" }, { status: 400 });
     }
     
-    await prisma.tier.delete({
-      where: { id: tierId },
+    const deletedTier = await prisma.tier.delete({
+      where: { id: tierId, shopDomain: session.shop },
+    });
+    
+    // Reorder remaining tiers
+    await prisma.tier.updateMany({
+      where: {
+        shopDomain: session.shop,
+        level: { gt: deletedTier.level }
+      },
+      data: {
+        level: { decrement: 1 }
+      }
     });
   }
   
@@ -124,14 +149,13 @@ export default function TierSettings() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px", marginBottom: "15px" }}>
             <div>
               <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Internal Name (no spaces)
+                Tier Name
               </label>
               <input
                 type="text"
                 name="name"
                 required
-                placeholder="e.g., diamond"
-                pattern="[a-z0-9]+"
+                placeholder="e.g., Gold, Platinum, Diamond"
                 style={{
                   width: "100%",
                   padding: "8px",
@@ -144,31 +168,12 @@ export default function TierSettings() {
             
             <div>
               <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Display Name
-              </label>
-              <input
-                type="text"
-                name="displayName"
-                required
-                placeholder="e.g., Diamond"
-                style={{
-                  width: "100%",
-                  padding: "8px",
-                  border: "1px solid #ccc",
-                  borderRadius: "4px",
-                  fontSize: "16px"
-                }}
-              />
-            </div>
-            
-            <div>
-              <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Minimum Spend ($)
+                Minimum Lifetime Spend ($)
               </label>
               <input
                 type="number"
                 name="minSpend"
-                placeholder="e.g., 10000"
+                placeholder="e.g., 1000 (leave empty for base tier)"
                 min="0"
                 step="0.01"
                 style={{
@@ -183,52 +188,16 @@ export default function TierSettings() {
             
             <div>
               <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Color
-              </label>
-              <input
-                type="color"
-                name="color"
-                defaultValue="#6B7280"
-                style={{
-                  width: "100%",
-                  height: "38px",
-                  border: "1px solid #ccc",
-                  borderRadius: "4px",
-                  cursor: "pointer"
-                }}
-              />
-            </div>
-            
-            <div>
-              <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Evaluation Period (days)
-              </label>
-              <input
-                type="number"
-                name="spendingDays"
-                placeholder="e.g., 365"
-                min="1"
-                style={{
-                  width: "100%",
-                  padding: "8px",
-                  border: "1px solid #ccc",
-                  borderRadius: "4px",
-                  fontSize: "16px"
-                }}
-              />
-            </div>
-            
-            <div>
-              <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Cashback %
+                Cashback Percentage (%)
               </label>
               <input
                 type="number"
                 name="cashbackPercent"
                 required
-                placeholder="e.g., 7"
+                placeholder="e.g., 5"
                 step="0.1"
                 min="0"
+                max="100"
                 style={{
                   width: "100%",
                   padding: "8px",
@@ -272,7 +241,8 @@ export default function TierSettings() {
               marginBottom: "15px", 
               borderRadius: "8px",
               border: "1px solid #ddd",
-              position: "relative"
+              position: "relative",
+              opacity: tier.isActive ? 1 : 0.7
             }}>
               {/* Delete button */}
               <fetcher.Form method="post" style={{ position: "absolute", top: "20px", right: "20px" }}>
@@ -303,11 +273,24 @@ export default function TierSettings() {
                 <h3 style={{ 
                   fontSize: "18px", 
                   marginBottom: "15px",
-                  color: tier.color || "#000"
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px"
                 }}>
-                  {tier.displayName} (Level {tier.level})
+                  {tier.name} (Level {tier.level})
+                  {!tier.isActive && (
+                    <span style={{ 
+                      fontSize: "12px", 
+                      backgroundColor: "#fbbf24", 
+                      color: "#92400e",
+                      padding: "2px 8px",
+                      borderRadius: "4px"
+                    }}>
+                      Inactive
+                    </span>
+                  )}
                   {tier.memberCount > 0 && (
-                    <span style={{ fontSize: "14px", color: "#666", marginLeft: "10px" }}>
+                    <span style={{ fontSize: "14px", color: "#666" }}>
                       {tier.memberCount} members
                     </span>
                   )}
@@ -316,14 +299,15 @@ export default function TierSettings() {
                 <div style={{ display: "flex", gap: "20px", alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
                     <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                      Evaluation Period (days)
+                      Minimum Lifetime Spend ($)
                     </label>
                     <input
                       type="number"
-                      name="spendingDays"
-                      defaultValue={tier.spendingPeriodDays || ""}
-                      placeholder="e.g., 365"
-                      min="1"
+                      name="minSpend"
+                      defaultValue={tier.minSpend || ""}
+                      placeholder="No minimum"
+                      min="0"
+                      step="0.01"
                       style={{
                         width: "100%",
                         padding: "8px",
@@ -336,7 +320,7 @@ export default function TierSettings() {
                   
                   <div style={{ flex: 1 }}>
                     <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                      Cashback %
+                      Cashback Percentage (%)
                     </label>
                     <input
                       type="number"
@@ -344,6 +328,7 @@ export default function TierSettings() {
                       defaultValue={tier.cashbackPercent}
                       step="0.1"
                       min="0"
+                      max="100"
                       required
                       style={{
                         width: "100%",
@@ -353,6 +338,19 @@ export default function TierSettings() {
                         fontSize: "16px"
                       }}
                     />
+                  </div>
+                  
+                  <div>
+                    <label style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "5px", fontSize: "14px" }}>
+                      <input
+                        type="checkbox"
+                        name="isActive"
+                        value="true"
+                        defaultChecked={tier.isActive}
+                        style={{ cursor: "pointer" }}
+                      />
+                      Active
+                    </label>
                   </div>
                   
                   <button
@@ -372,11 +370,9 @@ export default function TierSettings() {
                   </button>
                 </div>
                 
-                {tier.minSpend !== null && (
-                  <p style={{ marginTop: "10px", fontSize: "14px", color: "#666" }}>
-                    Min spend: ${tier.minSpend}
-                  </p>
-                )}
+                <p style={{ marginTop: "10px", fontSize: "14px", color: "#666" }}>
+                  Created: {new Date(tier.createdAt).toLocaleDateString()}
+                </p>
               </Form>
             </div>
           ))
