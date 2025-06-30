@@ -8,7 +8,7 @@ import {
 } from "../services/dashboard.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   
   const [metrics, tierDistribution] = await Promise.all([
     getDashboardMetrics(),

@@ -1,9 +1,9 @@
 // app/routes/app.tiers.tsx
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Form, useNavigation, useFetcher } from "@remix-run/react";
+import { useLoaderData, Form, useNavigation, useFetcher, useActionData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -25,8 +25,28 @@ export async function loader({ request }: LoaderFunctionArgs) {
     memberCount: tierMemberCounts.find(t => t.tierId === tier.id)?._count || 0
   }));
 
-  return json({ tiers: tiersWithCounts });
+  // Get total customers and total cashback earned
+  const [totalCustomers, totalCashback] = await Promise.all([
+    prisma.customer.count({ where: { shopDomain: session.shop } }),
+    prisma.cashbackTransaction.aggregate({
+      where: { shopDomain: session.shop },
+      _sum: { cashbackAmount: true }
+    })
+  ]);
+
+  return json({ 
+    tiers: tiersWithCounts,
+    stats: {
+      totalCustomers,
+      totalCashback: totalCashback._sum.cashbackAmount || 0
+    }
+  });
 }
+
+// Define action response type
+type ActionResponse = 
+  | { success: true; message?: string; error?: never }
+  | { success: false; error: string; message?: never };
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -34,177 +54,444 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const action = formData.get("_action");
   
-  if (action === "update") {
-    const tierId = formData.get("tierId") as string;
-    const minSpend = formData.get("minSpend");
-    const cashbackPercent = formData.get("cashbackPercent");
-    const isActive = formData.get("isActive") === "true";
-    
-    await prisma.tier.update({
-      where: { id: tierId, shopDomain: session.shop },
-      data: {
-        minSpend: minSpend ? parseFloat(minSpend as string) : null,
-        cashbackPercent: parseFloat(cashbackPercent as string),
-        isActive,
-      },
-    });
-  } else if (action === "create") {
-    const name = formData.get("name") as string;
-    
-    // Check for duplicate name
-    const existingTier = await prisma.tier.findFirst({
-      where: { shopDomain: session.shop, name }
-    });
-    
-    if (existingTier) {
-      return json({ error: "A tier with this name already exists" }, { status: 400 });
-    }
-    
-    const maxLevel = await prisma.tier.findFirst({
-      where: { shopDomain: session.shop },
-      orderBy: { level: 'desc' },
-      select: { level: true }
-    });
-    
-    await prisma.tier.create({
-      data: {
-        shopDomain: session.shop,
-        name,
-        level: (maxLevel?.level || 0) + 1,
-        minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
-        cashbackPercent: parseFloat(formData.get("cashbackPercent") as string),
-        isActive: true,
-      },
-    });
-  } else if (action === "delete") {
-    const tierId = formData.get("tierId") as string;
-    
-    // Check if tier has active members
-    const memberCount = await prisma.customerMembership.count({
-      where: { tierId, isActive: true }
-    });
-    
-    if (memberCount > 0) {
-      return json({ error: "Cannot delete tier with active members" }, { status: 400 });
-    }
-    
-    const deletedTier = await prisma.tier.delete({
-      where: { id: tierId, shopDomain: session.shop },
-    });
-    
-    // Reorder remaining tiers
-    await prisma.tier.updateMany({
-      where: {
-        shopDomain: session.shop,
-        level: { gt: deletedTier.level }
-      },
-      data: {
-        level: { decrement: 1 }
+  try {
+    if (action === "update") {
+      const tierId = formData.get("tierId") as string;
+      const minSpend = formData.get("minSpend");
+      const cashbackPercent = formData.get("cashbackPercent");
+      const isActive = formData.get("isActive") === "true";
+      
+      await prisma.tier.update({
+        where: { id: tierId, shopDomain: session.shop },
+        data: {
+          minSpend: minSpend ? parseFloat(minSpend as string) : null,
+          cashbackPercent: parseFloat(cashbackPercent as string),
+          isActive,
+        },
+      });
+      
+      return json<ActionResponse>({ success: true, message: "Tier updated successfully" });
+    } else if (action === "create") {
+      const name = formData.get("name") as string;
+      
+      // Check for duplicate name
+      const existingTier = await prisma.tier.findFirst({
+        where: { shopDomain: session.shop, name }
+      });
+      
+      if (existingTier) {
+        return json<ActionResponse>({ success: false, error: "A tier with this name already exists" }, { status: 400 });
       }
-    });
+      
+      const maxLevel = await prisma.tier.findFirst({
+        where: { shopDomain: session.shop },
+        orderBy: { level: 'desc' },
+        select: { level: true }
+      });
+      
+      await prisma.tier.create({
+        data: {
+          shopDomain: session.shop,
+          name,
+          level: (maxLevel?.level || 0) + 1,
+          minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
+          cashbackPercent: parseFloat(formData.get("cashbackPercent") as string),
+          isActive: true,
+        },
+      });
+      
+      return json<ActionResponse>({ success: true, message: "Tier created successfully" });
+    } else if (action === "delete") {
+      const tierId = formData.get("tierId") as string;
+      
+      // Check if tier has active members
+      const memberCount = await prisma.customerMembership.count({
+        where: { tierId, isActive: true }
+      });
+      
+      if (memberCount > 0) {
+        return json<ActionResponse>({ success: false, error: "Cannot delete tier with active members" }, { status: 400 });
+      }
+      
+      const deletedTier = await prisma.tier.delete({
+        where: { id: tierId, shopDomain: session.shop },
+      });
+      
+      // Reorder remaining tiers
+      await prisma.tier.updateMany({
+        where: {
+          shopDomain: session.shop,
+          level: { gt: deletedTier.level }
+        },
+        data: {
+          level: { decrement: 1 }
+        }
+      });
+      
+      return json<ActionResponse>({ success: true, message: "Tier deleted successfully" });
+    }
+  } catch (error) {
+    return json<ActionResponse>({ success: false, error: "An error occurred. Please try again." }, { status: 500 });
   }
   
-  return json({ success: true });
+  return json<ActionResponse>({ success: true });
 }
 
 export default function TierSettings() {
-  const { tiers } = useLoaderData<typeof loader>();
+  const { tiers, stats } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const fetcher = useFetcher();
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const isSubmitting = navigation.state === "submitting";
 
+  // Show notifications from action data
+  useEffect(() => {
+    if (actionData) {
+      if ('success' in actionData && actionData.success) {
+        setNotification({ type: 'success', message: actionData.message || 'Operation successful' });
+        setShowCreateForm(false);
+        setTimeout(() => setNotification(null), 5000);
+      } else if ('error' in actionData && actionData.error) {
+        setNotification({ type: 'error', message: actionData.error });
+        setTimeout(() => setNotification(null), 5000);
+      }
+    }
+  }, [actionData]);
+
+  const styles = {
+    container: {
+      maxWidth: "1200px",
+      margin: "0 auto",
+      padding: "32px 24px",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      color: "#1a1a1a",
+      backgroundColor: "#ffffff",
+      minHeight: "100vh"
+    },
+    header: {
+      marginBottom: "40px"
+    },
+    title: {
+      fontSize: "32px",
+      fontWeight: "600",
+      margin: "0 0 8px 0",
+      color: "#1a1a1a"
+    },
+    subtitle: {
+      fontSize: "16px",
+      color: "#666",
+      margin: 0,
+      fontWeight: "400"
+    },
+    statsGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+      gap: "24px",
+      marginBottom: "40px"
+    },
+    statCard: {
+      backgroundColor: "#f8f9fa",
+      padding: "24px",
+      borderRadius: "12px",
+      textAlign: "center" as const
+    },
+    statValue: {
+      fontSize: "32px",
+      fontWeight: "600",
+      margin: "0 0 4px 0",
+      color: "#1a1a1a"
+    },
+    statLabel: {
+      fontSize: "14px",
+      color: "#666",
+      margin: 0
+    },
+    sectionHeader: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: "24px"
+    },
+    sectionTitle: {
+      fontSize: "20px",
+      fontWeight: "600",
+      margin: 0,
+      color: "#1a1a1a"
+    },
+    addButton: {
+      padding: "10px 20px",
+      backgroundColor: "#1a1a1a",
+      color: "white",
+      border: "none",
+      borderRadius: "8px",
+      cursor: "pointer",
+      fontSize: "14px",
+      fontWeight: "500",
+      transition: "opacity 0.2s",
+      ":hover": {
+        opacity: 0.8
+      }
+    },
+    createForm: {
+      backgroundColor: "#f8f9fa",
+      padding: "32px",
+      marginBottom: "32px",
+      borderRadius: "12px",
+      border: "1px solid #e0e0e0"
+    },
+    formTitle: {
+      fontSize: "18px",
+      fontWeight: "600",
+      marginTop: 0,
+      marginBottom: "24px",
+      color: "#1a1a1a"
+    },
+    formGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+      gap: "20px",
+      marginBottom: "24px"
+    },
+    formGroup: {
+      display: "flex",
+      flexDirection: "column" as const
+    },
+    label: {
+      fontSize: "14px",
+      fontWeight: "500",
+      marginBottom: "8px",
+      color: "#333"
+    },
+    input: {
+      padding: "10px 14px",
+      border: "1px solid #e0e0e0",
+      borderRadius: "8px",
+      fontSize: "15px",
+      backgroundColor: "white",
+      transition: "border-color 0.2s",
+      outline: "none"
+    },
+    helpText: {
+      fontSize: "12px",
+      color: "#666",
+      marginTop: "4px"
+    },
+    tierCard: {
+      backgroundColor: "white",
+      padding: "24px",
+      marginBottom: "16px",
+      borderRadius: "12px",
+      border: "1px solid #e0e0e0",
+      position: "relative" as const,
+      transition: "box-shadow 0.2s"
+    },
+    tierHeader: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      marginBottom: "20px"
+    },
+    tierName: {
+      fontSize: "20px",
+      fontWeight: "600",
+      margin: 0,
+      color: "#1a1a1a"
+    },
+    tierMeta: {
+      display: "flex",
+      gap: "12px",
+      alignItems: "center",
+      marginTop: "4px"
+    },
+    badge: {
+      fontSize: "12px",
+      padding: "4px 12px",
+      borderRadius: "16px",
+      fontWeight: "500"
+    },
+    activeBadge: {
+      backgroundColor: "#e8f5e9",
+      color: "#2e7d32"
+    },
+    inactiveBadge: {
+      backgroundColor: "#fff3e0",
+      color: "#e65100"
+    },
+    memberCount: {
+      fontSize: "14px",
+      color: "#666"
+    },
+    tierForm: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr auto",
+      gap: "16px",
+      alignItems: "flex-end"
+    },
+    deleteButton: {
+      position: "absolute" as const,
+      top: "24px",
+      right: "24px",
+      padding: "6px 12px",
+      backgroundColor: "transparent",
+      color: "#dc3545",
+      border: "1px solid #dc3545",
+      borderRadius: "6px",
+      cursor: "pointer",
+      fontSize: "13px",
+      transition: "all 0.2s"
+    },
+    saveButton: {
+      padding: "10px 20px",
+      backgroundColor: "#1a1a1a",
+      color: "white",
+      border: "none",
+      borderRadius: "8px",
+      cursor: "pointer",
+      fontSize: "14px",
+      fontWeight: "500",
+      transition: "opacity 0.2s"
+    },
+    notification: {
+      padding: "16px 20px",
+      borderRadius: "8px",
+      marginBottom: "24px",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center"
+    },
+    successNotification: {
+      backgroundColor: "#e8f5e9",
+      color: "#2e7d32",
+      border: "1px solid #c8e6c9"
+    },
+    errorNotification: {
+      backgroundColor: "#ffebee",
+      color: "#c62828",
+      border: "1px solid #ffcdd2"
+    },
+    emptyState: {
+      textAlign: "center" as const,
+      padding: "60px 20px",
+      backgroundColor: "#f8f9fa",
+      borderRadius: "12px",
+      border: "1px solid #e0e0e0"
+    },
+    emptyStateTitle: {
+      fontSize: "20px",
+      fontWeight: "600",
+      marginBottom: "8px",
+      color: "#1a1a1a"
+    },
+    emptyStateText: {
+      fontSize: "16px",
+      color: "#666",
+      marginBottom: "24px"
+    }
+  };
+
   return (
-    <div style={{ padding: "20px", maxWidth: "800px", margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-        <h1 style={{ fontSize: "24px", margin: 0 }}>Tier Settings</h1>
+    <div style={styles.container}>
+      {/* Header */}
+      <div style={styles.header}>
+        <h1 style={styles.title}>Rewards Tiers</h1>
+        <p style={styles.subtitle}>Build customer loyalty with simple, transparent cashback rewards</p>
+      </div>
+
+      {/* Notification */}
+      {notification && (
+        <div style={{
+          ...styles.notification,
+          ...(notification.type === 'success' ? styles.successNotification : styles.errorNotification)
+        }}>
+          <span>{notification.message}</span>
+          <button 
+            onClick={() => setNotification(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px' }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Stats */}
+      <div style={styles.statsGrid}>
+        <div style={styles.statCard}>
+          <h3 style={styles.statValue}>{tiers.filter(t => t.isActive).length}</h3>
+          <p style={styles.statLabel}>Active Tiers</p>
+        </div>
+        <div style={styles.statCard}>
+          <h3 style={styles.statValue}>{stats.totalCustomers}</h3>
+          <p style={styles.statLabel}>Total Customers</p>
+        </div>
+        <div style={styles.statCard}>
+          <h3 style={styles.statValue}>${stats.totalCashback.toFixed(2)}</h3>
+          <p style={styles.statLabel}>Total Cashback Earned</p>
+        </div>
+      </div>
+
+      {/* Tiers Section */}
+      <div style={styles.sectionHeader}>
+        <h2 style={styles.sectionTitle}>Tier Configuration</h2>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
-          style={{
-            padding: "8px 16px",
-            backgroundColor: "#10B981",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: "pointer",
-            fontSize: "14px"
-          }}
+          style={styles.addButton}
+          onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
+          onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
         >
-          {showCreateForm ? "Cancel" : "+ Add New Tier"}
+          {showCreateForm ? "Cancel" : "+ Add Tier"}
         </button>
       </div>
       
-      {/* Create new tier form */}
+      {/* Create Form */}
       {showCreateForm && (
-        <Form method="post" style={{ 
-          backgroundColor: "#e0f2fe", 
-          padding: "20px", 
-          marginBottom: "20px", 
-          borderRadius: "8px",
-          border: "2px solid #0284c7"
-        }}>
+        <Form method="post" style={styles.createForm}>
           <input type="hidden" name="_action" value="create" />
-          <h3 style={{ marginTop: 0, marginBottom: "15px" }}>Create New Tier</h3>
+          <h3 style={styles.formTitle}>Create New Tier</h3>
           
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px", marginBottom: "15px" }}>
-            <div>
-              <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Tier Name
-              </label>
+          <div style={styles.formGrid}>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Tier Name</label>
               <input
                 type="text"
                 name="name"
                 required
-                placeholder="e.g., Gold, Platinum, Diamond"
-                style={{
-                  width: "100%",
-                  padding: "8px",
-                  border: "1px solid #ccc",
-                  borderRadius: "4px",
-                  fontSize: "16px"
-                }}
+                placeholder="e.g., Silver, Gold, Platinum"
+                style={styles.input}
+                onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
               />
             </div>
             
-            <div>
-              <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Minimum Lifetime Spend ($)
-              </label>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Minimum Spend</label>
               <input
                 type="number"
                 name="minSpend"
-                placeholder="e.g., 1000 (leave empty for base tier)"
+                placeholder="0.00"
                 min="0"
                 step="0.01"
-                style={{
-                  width: "100%",
-                  padding: "8px",
-                  border: "1px solid #ccc",
-                  borderRadius: "4px",
-                  fontSize: "16px"
-                }}
+                style={styles.input}
+                onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
               />
+              <span style={styles.helpText}>Leave empty for base tier</span>
             </div>
             
-            <div>
-              <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                Cashback Percentage (%)
-              </label>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Cashback %</label>
               <input
                 type="number"
                 name="cashbackPercent"
                 required
-                placeholder="e.g., 5"
+                placeholder="5"
                 step="0.1"
                 min="0"
                 max="100"
-                style={{
-                  width: "100%",
-                  padding: "8px",
-                  border: "1px solid #ccc",
-                  borderRadius: "4px",
-                  fontSize: "16px"
-                }}
+                style={styles.input}
+                onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
               />
             </div>
           </div>
@@ -213,14 +500,9 @@ export default function TierSettings() {
             type="submit"
             disabled={isSubmitting}
             style={{
-              padding: "10px 24px",
-              backgroundColor: isSubmitting ? "#ccc" : "#0284c7",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: isSubmitting ? "not-allowed" : "pointer",
-              fontSize: "16px",
-              fontWeight: "bold"
+              ...styles.saveButton,
+              opacity: isSubmitting ? 0.6 : 1,
+              cursor: isSubmitting ? "not-allowed" : "pointer"
             }}
           >
             {isSubmitting ? "Creating..." : "Create Tier"}
@@ -228,79 +510,87 @@ export default function TierSettings() {
         </Form>
       )}
       
-      <div style={{ backgroundColor: "#f5f5f5", padding: "20px", borderRadius: "8px" }}>
+      {/* Tiers List */}
+      <div>
         {tiers.length === 0 ? (
-          <p style={{ textAlign: "center", color: "#666" }}>
-            No tiers found. Click "Add New Tier" to create your first tier.
-          </p>
+          <div style={styles.emptyState}>
+            <h3 style={styles.emptyStateTitle}>No tiers yet</h3>
+            <p style={styles.emptyStateText}>Create your first tier to start rewarding customers</p>
+            <button
+              onClick={() => setShowCreateForm(true)}
+              style={styles.saveButton}
+            >
+              Create First Tier
+            </button>
+          </div>
         ) : (
           tiers.map((tier) => (
-            <div key={tier.id} style={{ 
-              backgroundColor: "white", 
-              padding: "20px", 
-              marginBottom: "15px", 
-              borderRadius: "8px",
-              border: "1px solid #ddd",
-              position: "relative",
-              opacity: tier.isActive ? 1 : 0.7
-            }}>
+            <div 
+              key={tier.id} 
+              style={{
+                ...styles.tierCard,
+                opacity: tier.isActive ? 1 : 0.7
+              }}
+              onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'}
+              onMouseOut={(e) => e.currentTarget.style.boxShadow = 'none'}
+            >
               {/* Delete button */}
-              <fetcher.Form method="post" style={{ position: "absolute", top: "20px", right: "20px" }}>
+              <fetcher.Form method="post">
                 <input type="hidden" name="_action" value="delete" />
                 <input type="hidden" name="tierId" value={tier.id} />
                 <button
                   type="submit"
                   disabled={tier.memberCount > 0 || fetcher.state === "submitting"}
-                  title={tier.memberCount > 0 ? `Cannot delete: ${tier.memberCount} active members` : "Delete tier"}
+                  title={tier.memberCount > 0 ? `${tier.memberCount} active members` : "Delete tier"}
                   style={{
-                    padding: "4px 8px",
-                    backgroundColor: tier.memberCount > 0 ? "#e5e5e5" : "#ef4444",
-                    color: tier.memberCount > 0 ? "#999" : "white",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: tier.memberCount > 0 ? "not-allowed" : "pointer",
-                    fontSize: "12px"
+                    ...styles.deleteButton,
+                    opacity: tier.memberCount > 0 ? 0.5 : 1,
+                    cursor: tier.memberCount > 0 ? "not-allowed" : "pointer"
+                  }}
+                  onMouseOver={(e) => {
+                    if (tier.memberCount === 0) {
+                      e.currentTarget.style.backgroundColor = '#dc3545';
+                      e.currentTarget.style.color = 'white';
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = '#dc3545';
                   }}
                 >
                   Delete
                 </button>
               </fetcher.Form>
               
+              <div style={styles.tierHeader}>
+                <div>
+                  <h3 style={styles.tierName}>{tier.name}</h3>
+                  <div style={styles.tierMeta}>
+                    <span style={{
+                      ...styles.badge,
+                      ...(tier.isActive ? styles.activeBadge : styles.inactiveBadge)
+                    }}>
+                      {tier.isActive ? "Active" : "Inactive"}
+                    </span>
+                    <span style={styles.memberCount}>
+                      Level {tier.level}
+                    </span>
+                    {tier.memberCount > 0 && (
+                      <span style={styles.memberCount}>
+                        • {tier.memberCount} {tier.memberCount === 1 ? 'member' : 'members'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
               <Form method="post">
                 <input type="hidden" name="_action" value="update" />
                 <input type="hidden" name="tierId" value={tier.id} />
                 
-                <h3 style={{ 
-                  fontSize: "18px", 
-                  marginBottom: "15px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px"
-                }}>
-                  {tier.name} (Level {tier.level})
-                  {!tier.isActive && (
-                    <span style={{ 
-                      fontSize: "12px", 
-                      backgroundColor: "#fbbf24", 
-                      color: "#92400e",
-                      padding: "2px 8px",
-                      borderRadius: "4px"
-                    }}>
-                      Inactive
-                    </span>
-                  )}
-                  {tier.memberCount > 0 && (
-                    <span style={{ fontSize: "14px", color: "#666" }}>
-                      {tier.memberCount} members
-                    </span>
-                  )}
-                </h3>
-                
-                <div style={{ display: "flex", gap: "20px", alignItems: "flex-end" }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                      Minimum Lifetime Spend ($)
-                    </label>
+                <div style={styles.tierForm}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Minimum Spend</label>
                     <input
                       type="number"
                       name="minSpend"
@@ -308,20 +598,14 @@ export default function TierSettings() {
                       placeholder="No minimum"
                       min="0"
                       step="0.01"
-                      style={{
-                        width: "100%",
-                        padding: "8px",
-                        border: "1px solid #ccc",
-                        borderRadius: "4px",
-                        fontSize: "16px"
-                      }}
+                      style={styles.input}
+                      onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                      onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
                     />
                   </div>
                   
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: "block", marginBottom: "5px", fontSize: "14px" }}>
-                      Cashback Percentage (%)
-                    </label>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Cashback %</label>
                     <input
                       type="number"
                       name="cashbackPercent"
@@ -330,49 +614,37 @@ export default function TierSettings() {
                       min="0"
                       max="100"
                       required
-                      style={{
-                        width: "100%",
-                        padding: "8px",
-                        border: "1px solid #ccc",
-                        borderRadius: "4px",
-                        fontSize: "16px"
-                      }}
+                      style={styles.input}
+                      onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                      onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
                     />
                   </div>
                   
-                  <div>
-                    <label style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "5px", fontSize: "14px" }}>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px' }}>
                       <input
                         type="checkbox"
                         name="isActive"
                         value="true"
                         defaultChecked={tier.isActive}
-                        style={{ cursor: "pointer" }}
+                        style={{ width: '16px', height: '16px', cursor: 'pointer' }}
                       />
                       Active
                     </label>
+                    
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      style={{
+                        ...styles.saveButton,
+                        opacity: isSubmitting ? 0.6 : 1,
+                        cursor: isSubmitting ? "not-allowed" : "pointer"
+                      }}
+                    >
+                      {isSubmitting ? "Saving..." : "Save"}
+                    </button>
                   </div>
-                  
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    style={{
-                      padding: "8px 20px",
-                      backgroundColor: isSubmitting ? "#ccc" : "#4F46E5",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "4px",
-                      cursor: isSubmitting ? "not-allowed" : "pointer",
-                      fontSize: "16px"
-                    }}
-                  >
-                    {isSubmitting ? "Saving..." : "Save"}
-                  </button>
                 </div>
-                
-                <p style={{ marginTop: "10px", fontSize: "14px", color: "#666" }}>
-                  Created: {new Date(tier.createdAt).toLocaleDateString()}
-                </p>
               </Form>
             </div>
           ))
