@@ -63,7 +63,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     
     // Find or create customer
     let customer = await db.customer.findUnique({
-      where: { shopifyCustomerId: customerId }
+      where: { 
+        shopDomain_shopifyCustomerId: {
+          shopDomain: shop,
+          shopifyCustomerId: customerId
+        }
+      }
     });
     
     let isNewCustomer = false;
@@ -71,6 +76,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       console.log(`Creating new customer: ${customerEmail}`);
       customer = await db.customer.create({
         data: {
+          shopDomain: shop,
           shopifyCustomerId: customerId,
           email: customerEmail,
           storeCredit: 0,
@@ -84,7 +90,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     
     // Check if we already processed this order
     const existingTransaction = await db.cashbackTransaction.findUnique({
-      where: { shopifyOrderId: orderId }
+      where: { 
+        shopDomain_shopifyOrderId: {
+          shopDomain: shop,
+          shopifyOrderId: orderId
+        }
+      }
     });
     
     if (existingTransaction) {
@@ -95,16 +106,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // TIER INTEGRATION: Assign initial tier to new customers
     if (isNewCustomer) {
       console.log("Assigning initial tier to new customer...");
-      await assignInitialTier(customer.id);
+      await assignInitialTier(customer.id, shop);
     }
     
     // TIER INTEGRATION: Get customer's current tier for cashback calculation
-    const tierInfo = await getCustomerTierInfo(customer.id);
+    const tierInfo = await getCustomerTierInfo(customer.id, shop);
     const cashbackPercent = tierInfo?.membership.tier.cashbackPercent || 1; // Default 1% if no tier
     const cashbackAmount = orderAmount * (cashbackPercent / 100);
     
     console.log(`Tier Information:`);
-    console.log(`  Current Tier: ${tierInfo?.membership.tier.displayName || 'None'}`);
+    console.log(`  Current Tier: ${tierInfo?.membership.tier.name || 'None'}`);
     console.log(`  Cashback Rate: ${cashbackPercent}%`);
     console.log(`  Cashback Amount: ${cashbackAmount.toFixed(2)} ${currency}`);
     
@@ -115,6 +126,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Create cashback transaction record
       db.cashbackTransaction.create({
         data: {
+          shopDomain: shop,
           customerId: customer.id,
           shopifyOrderId: orderId,
           orderAmount,
@@ -144,12 +156,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // TIER INTEGRATION: Evaluate if customer qualifies for tier upgrade
     console.log("Evaluating tier qualification...");
     const previousTierId = tierInfo?.membership.tierId;
-    const updatedMembership = await evaluateCustomerTier(customer.id);
+    const updatedMembership = await evaluateCustomerTier(customer.id, shop);
     
     if (updatedMembership && previousTierId !== updatedMembership.tierId) {
       console.log(`🎉 Customer tier upgraded!`);
-      console.log(`   From: ${tierInfo?.membership.tier.displayName || 'None'}`);
-      console.log(`   To: ${updatedMembership.tier.displayName}`);
+      console.log(`   From: ${tierInfo?.membership.tier.name || 'None'}`);
+      console.log(`   To: ${updatedMembership.tier.name}`);
       console.log(`   New cashback rate: ${updatedMembership.tier.cashbackPercent}%`);
       
       // Optional: Update Shopify customer tags
@@ -173,7 +185,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               variables: {
                 input: {
                   id: `gid://shopify/Customer/${customerId}`,
-                  tags: [`Tier:${updatedMembership.tier.displayName}`]
+                  tags: [`Tier:${updatedMembership.tier.name}`]
                 }
               }
             }
@@ -183,7 +195,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (tagResult.data?.customerUpdate?.userErrors?.length > 0) {
             console.error("Failed to update customer tags:", tagResult.data.customerUpdate.userErrors);
           } else {
-            console.log(`✅ Updated Shopify customer tag to: Tier:${updatedMembership.tier.displayName}`);
+            console.log(`✅ Updated Shopify customer tag to: Tier:${updatedMembership.tier.name}`);
           }
         } catch (tagError) {
           console.error("Failed to update customer tags:", tagError);

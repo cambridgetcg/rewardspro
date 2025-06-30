@@ -78,10 +78,10 @@ export default function App() {
           Dashboard
         </Link>
         <Link to="/app/store-credit" prefetch="intent">
-          Test store credit issuance
+          Manage Store Credit
         </Link>
         <Link to="/app/settings/tiers" prefetch="intent">
-          Test Tiers Editing
+          Edit Tiers
         </Link>
         <Link to="/app/customers/tiers" prefetch="intent">
           Customer Tiers
