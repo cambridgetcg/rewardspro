@@ -3,15 +3,18 @@ import prisma from "../db.server";
 import type { Customer, Tier, CustomerMembership } from "@prisma/client";
 
 // Assign initial tier to new customer
-export async function assignInitialTier(customerId: string) {
+export async function assignInitialTier(customerId: string, shopDomain: string) {
   // Get the lowest level tier (usually Bronze/Basic)
   const defaultTier = await prisma.tier.findFirst({
-    where: { isActive: true },
+    where: { 
+      shopDomain,
+      isActive: true 
+    },
     orderBy: { level: 'asc' }
   });
 
   if (!defaultTier) {
-    throw new Error("No active tiers found");
+    throw new Error("No active tiers found for shop");
   }
 
   // Create membership record
@@ -19,7 +22,6 @@ export async function assignInitialTier(customerId: string) {
     data: {
       customerId,
       tierId: defaultTier.id,
-      source: "SPENDING_THRESHOLD",
       isActive: true,
     }
   });
@@ -27,8 +29,8 @@ export async function assignInitialTier(customerId: string) {
   return membership;
 }
 
-// Evaluate customer's tier based on spending
-export async function evaluateCustomerTier(customerId: string) {
+// Evaluate customer's tier based on lifetime spending
+export async function evaluateCustomerTier(customerId: string, shopDomain: string) {
   // Get customer with current membership
   const customer = await prisma.customer.findUnique({
     where: { id: customerId },
@@ -45,43 +47,45 @@ export async function evaluateCustomerTier(customerId: string) {
     }
   });
 
-  if (!customer) return null;
+  if (!customer || customer.shopDomain !== shopDomain) return null;
 
   const currentMembership = customer.membershipHistory[0];
-  
-  // Don't change purchased or manually assigned tiers
-  if (currentMembership?.source !== "SPENDING_THRESHOLD") {
-    return currentMembership;
-  }
 
-  // Get all active tiers
+  // Get all active tiers for this shop
   const tiers = await prisma.tier.findMany({
-    where: { isActive: true },
+    where: { 
+      shopDomain,
+      isActive: true 
+    },
     orderBy: { level: 'desc' } // Start from highest
   });
 
-  // Calculate spending for each tier's period
+  // Calculate total lifetime spending
+  const lifetimeSpending = customer.transactions.reduce(
+    (sum, t) => sum + t.orderAmount, 
+    0
+  );
+
+  // Find the highest tier the customer qualifies for
   let qualifiedTier: Tier | null = null;
 
   for (const tier of tiers) {
-    if (!tier.spendingPeriodDays || tier.minSpend === null) continue;
+    // If tier has no minimum spend, it's the base tier
+    if (tier.minSpend === null) {
+      qualifiedTier = tier;
+      continue;
+    }
 
-    const periodStart = new Date();
-    periodStart.setDate(periodStart.getDate() - tier.spendingPeriodDays);
-
-    const spending = customer.transactions
-      .filter(t => new Date(t.createdAt) >= periodStart)
-      .reduce((sum, t) => sum + t.orderAmount, 0);
-
-    if (spending >= tier.minSpend) {
+    // Check if customer qualifies for this tier
+    if (lifetimeSpending >= tier.minSpend) {
       qualifiedTier = tier;
       break; // Found highest qualifying tier
     }
   }
 
-  // If no tier qualified, use default (lowest)
+  // If no tier qualified, use the base tier (no minSpend)
   if (!qualifiedTier) {
-    qualifiedTier = tiers[tiers.length - 1];
+    qualifiedTier = tiers.find(t => t.minSpend === null) || tiers[tiers.length - 1];
   }
 
   // Update if tier changed
@@ -91,8 +95,7 @@ export async function evaluateCustomerTier(customerId: string) {
       await prisma.customerMembership.update({
         where: { id: currentMembership.id },
         data: { 
-          isActive: false,
-          endDate: new Date()
+          isActive: false
         }
       });
     }
@@ -102,7 +105,6 @@ export async function evaluateCustomerTier(customerId: string) {
       data: {
         customerId,
         tierId: qualifiedTier.id,
-        source: "SPENDING_THRESHOLD",
         isActive: true,
       },
       include: { tier: true }
@@ -115,7 +117,7 @@ export async function evaluateCustomerTier(customerId: string) {
 }
 
 // Get customer's current tier info
-export async function getCustomerTierInfo(customerId: string) {
+export async function getCustomerTierInfo(customerId: string, shopDomain: string) {
   const membership = await prisma.customerMembership.findFirst({
     where: {
       customerId,
@@ -127,11 +129,12 @@ export async function getCustomerTierInfo(customerId: string) {
     }
   });
 
-  if (!membership) return null;
+  if (!membership || membership.customer.shopDomain !== shopDomain) return null;
 
   // Calculate progress to next tier
   const nextTier = await prisma.tier.findFirst({
     where: {
+      shopDomain,
       level: { gt: membership.tier.level },
       isActive: true
     },
@@ -139,20 +142,18 @@ export async function getCustomerTierInfo(customerId: string) {
   });
 
   let progressInfo = null;
-  if (nextTier && nextTier.spendingPeriodDays && nextTier.minSpend) {
-    const periodStart = new Date();
-    periodStart.setDate(periodStart.getDate() - nextTier.spendingPeriodDays);
-
-    const currentSpending = await prisma.cashbackTransaction.aggregate({
+  if (nextTier && nextTier.minSpend !== null) {
+    // Get customer's total lifetime spending
+    const lifetimeSpending = await prisma.cashbackTransaction.aggregate({
       where: {
         customerId,
-        createdAt: { gte: periodStart },
+        shopDomain,
         status: { in: ["COMPLETED", "SYNCED_TO_SHOPIFY"] }
       },
       _sum: { orderAmount: true }
     });
 
-    const spent = currentSpending._sum.orderAmount || 0;
+    const spent = lifetimeSpending._sum.orderAmount || 0;
     progressInfo = {
       nextTier,
       currentSpending: spent,
@@ -172,46 +173,24 @@ export async function getCustomerTierInfo(customerId: string) {
 export async function assignTierManually(
   customerId: string, 
   tierId: string,
-  source: "MANUAL_ASSIGNMENT" | "PROMOTION" = "MANUAL_ASSIGNMENT"
+  shopDomain: string
 ) {
-  // Deactivate current membership
-  await prisma.customerMembership.updateMany({
-    where: {
-      customerId,
-      isActive: true
-    },
-    data: {
-      isActive: false,
-      endDate: new Date()
-    }
+  // Verify customer belongs to shop
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId }
   });
 
-  // Create new membership
-  const membership = await prisma.customerMembership.create({
-    data: {
-      customerId,
-      tierId,
-      source,
-      isActive: true,
-    },
-    include: { tier: true }
-  });
+  if (!customer || customer.shopDomain !== shopDomain) {
+    throw new Error("Customer not found or belongs to different shop");
+  }
 
-  return membership;
-}
-
-// Purchase a tier
-export async function purchaseTier(
-  customerId: string,
-  tierId: string,
-  purchaseOrderId: string
-) {
+  // Verify tier belongs to shop
   const tier = await prisma.tier.findUnique({
     where: { id: tierId }
   });
 
-  if (!tier?.isPurchasable) {
-    throw new Error("This tier is not purchasable");
+  if (!tier || tier.shopDomain !== shopDomain) {
+    throw new Error("Tier not found or belongs to different shop");
   }
 
   // Deactivate current membership
@@ -221,22 +200,81 @@ export async function purchaseTier(
       isActive: true
     },
     data: {
-      isActive: false,
-      endDate: new Date()
+      isActive: false
     }
   });
 
-  // Create new purchased membership
+  // Create new membership
   const membership = await prisma.customerMembership.create({
     data: {
       customerId,
       tierId,
-      source: "PURCHASED",
-      purchaseOrderId,
       isActive: true,
     },
     include: { tier: true }
   });
 
   return membership;
+}
+
+// Batch evaluate tiers for all customers in a shop
+export async function batchEvaluateCustomerTiers(shopDomain: string) {
+  const customers = await prisma.customer.findMany({
+    where: { shopDomain },
+    include: {
+      membershipHistory: {
+        where: { isActive: true }
+      }
+    }
+  });
+
+  const results = [];
+  
+  for (const customer of customers) {
+    try {
+      const result = await evaluateCustomerTier(customer.id, shopDomain);
+      results.push({
+        customerId: customer.id,
+        success: true,
+        membership: result
+      });
+    } catch (error) {
+      results.push({
+        customerId: customer.id,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  return results;
+}
+
+// Get tier distribution for a shop
+export async function getTierDistribution(shopDomain: string) {
+  const tiers = await prisma.tier.findMany({
+    where: { shopDomain },
+    orderBy: { level: 'asc' },
+    include: {
+      _count: {
+        select: {
+          customerMemberships: {
+            where: { isActive: true }
+          }
+        }
+      }
+    }
+  });
+
+  const totalCustomers = await prisma.customer.count({
+    where: { shopDomain }
+  });
+
+  return tiers.map(tier => ({
+    ...tier,
+    memberCount: tier._count.customerMemberships,
+    percentage: totalCustomers > 0 
+      ? (tier._count.customerMemberships / totalCustomers) * 100 
+      : 0
+  }));
 }
