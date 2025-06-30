@@ -1,15 +1,10 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
 model Session {
   id            String    @id
   shop          String
@@ -26,161 +21,70 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
-  
   @@index([shop])
   @@index([expires])
 }
-
 model Customer {
   id                String      @id @default(uuid())
-  shopDomain        String      // e.g., "store-name.myshopify.com" - separates data per store
-  shopifyCustomerId String      // Customer ID from Shopify (only unique within a store)
+  shopDomain        String      
+  shopifyCustomerId String      
   email             String
   storeCredit       Float       @default(0)
   totalEarned       Float       @default(0)
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
-  
-  // Relations
   transactions      CashbackTransaction[]
   membershipHistory CustomerMembership[]
-  creditLedger      StoreCreditLedger[]
-  
-  // Composite unique - same customer ID can exist in different stores
   @@unique([shopDomain, shopifyCustomerId])
   @@index([shopDomain])
   @@index([email])
-  @@index([shopDomain, email]) // Composite index for shop-specific email lookups
 }
-
 model CashbackTransaction {
   id                    String      @id @default(uuid())
-  shopDomain            String      // Associates transaction with specific store
+  shopDomain            String      
   customerId            String
-  shopifyOrderId        String      // Order ID from Shopify
+  shopifyOrderId        String      
   orderAmount           Float
   cashbackAmount        Float
   cashbackPercent       Float
   status                TransactionStatus @default(COMPLETED)
-  shopifyTransactionId  String?     // Shopify's store credit transaction ID
+  shopifyTransactionId  String?     
   createdAt             DateTime    @default(now())
-  
-  // Relations
   customer              Customer    @relation(fields: [customerId], references: [id])
-  
-  // Order ID is unique per store
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopDomain])
   @@index([customerId])
   @@index([createdAt])
-  @@index([status])
-  @@index([shopifyTransactionId])
-  // Composite index for efficient spending calculations
-  @@index([customerId, createdAt, status])
-  @@index([shopDomain, createdAt]) // For store-wide analytics
 }
-
-model StoreCreditLedger {
-  id                    String      @id @default(uuid())
-  shopDomain            String      // Store that issued/used the credit
-  customerId            String
-  amount                Float       // Positive for credit, negative for debit
-  type                  LedgerType
-  balance               Float       // Balance after this transaction
-  referenceId           String?     // Order ID or other reference
-  description           String?     // Human-readable description
-  shopifyTransactionId  String?     // Shopify's transaction ID
-  metadata              Json?       // Additional data (order details, etc.)
-  createdAt             DateTime    @default(now())
-  
-  // Relations
-  customer              Customer    @relation(fields: [customerId], references: [id])
-  
-  @@index([shopDomain])
-  @@index([customerId])
-  @@index([createdAt])
-  @@index([type])
-  @@index([referenceId])
-  @@index([shopifyTransactionId])
-  // Composite indexes for common queries
-  @@index([customerId, createdAt])
-  @@index([shopDomain, type, createdAt]) // For store analytics by type
-}
-
 model Tier {
   id                String      @id @default(uuid())
-  shopDomain        String      // Each store can have its own tier structure
-  name              String      // e.g., "Bronze", "Silver", "Gold", "Platinum"
-  level             Int         // 1, 2, 3, 4 (for ordering)
-  minSpend          Float?      // Minimum spending required (null for base tier)
-  spendingPeriodDays Int?       // Days to calculate spending (e.g., 365 for annual)
-  cashbackPercent   Float       // e.g., 1.0, 2.0, 3.0, 5.0
-  benefits          Json?       // ["Free shipping", "Priority support", etc.]
-  isPurchasable     Boolean     @default(false)
-  purchasePrice     Float?      // Price if tier can be purchased
+  shopDomain        String      
+  name              String      
+  level             Int         
+  minSpend          Float?      
+  cashbackPercent   Float       
   isActive          Boolean     @default(true)
   createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  
-  // Relations
   customerMemberships CustomerMembership[]
-  
-  // Each store has unique tier levels and names
   @@unique([shopDomain, level])
   @@unique([shopDomain, name])
   @@index([shopDomain])
-  @@index([isActive])
-  @@index([shopDomain, isActive]) // For fetching active tiers per store
 }
-
 model CustomerMembership {
   id                String      @id @default(uuid())
   customerId        String
   tierId            String
   startDate         DateTime    @default(now())
-  endDate           DateTime?   // Null for active memberships
-  source            MembershipSource
-  purchaseOrderId   String?     // If purchased, reference to order
   isActive          Boolean     @default(true)
   createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  
-  // Relations
   customer          Customer    @relation(fields: [customerId], references: [id])
   tier              Tier        @relation(fields: [tierId], references: [id])
-  
-  // Only one active membership per customer
   @@unique([customerId, isActive])
   @@index([customerId])
   @@index([tierId])
-  @@index([startDate])
-  @@index([endDate])
-  @@index([isActive])
 }
-
-// Enums
 enum TransactionStatus {
-  PENDING
   COMPLETED
-  CANCELLED
-  REFUNDED
   SYNCED_TO_SHOPIFY
   SHOPIFY_SYNC_FAILED
-}
-
-enum MembershipSource {
-  SPENDING_THRESHOLD  // Automatically earned by spending
-  PURCHASED          // Customer purchased the tier
-  MANUAL_ASSIGNMENT  // Admin manually assigned
-  PROMOTION         // Promotional upgrade
-}
-
-enum LedgerType {
-  CASHBACK_EARNED     // Credit earned from purchase
-  CREDIT_USED         // Credit used on order
-  MANUAL_ADJUSTMENT   // Admin adjustment (+/-)
-  REFUND_REVERSED     // Credit removed due to refund
-  EXPIRED             // Credit expiration (if implemented)
-  PROMOTIONAL         // Bonus credit given
-  PURCHASE_REFUND     // Credit returned from refunded purchase
 }
