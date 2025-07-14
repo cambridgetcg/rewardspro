@@ -80,7 +80,7 @@ export default function App() {
         <Link to="/app/store-credit" prefetch="intent">
           Credits
         </Link>
-        <Link to="/app/settings/tiers" prefetch="intent">
+        <Link to="/app/tiers" prefetch="intent">
           Tiers
         </Link>
         <Link to="/app/customers/tiers" prefetch="intent">

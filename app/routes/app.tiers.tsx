@@ -43,6 +43,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
 }
 
+// Helper function to recalculate all tier levels based on cashback percentage
+async function recalculateTierLevels(shopDomain: string) {
+  // Get all tiers sorted by cashback percentage (highest first)
+  const tiers = await prisma.tier.findMany({
+    where: { shopDomain },
+    orderBy: { cashbackPercent: 'desc' }
+  });
+
+  // Update each tier's level based on cashback percentage ranking
+  for (let i = 0; i < tiers.length; i++) {
+    await prisma.tier.update({
+      where: { id: tiers[i].id },
+      data: { level: i + 1 }
+    });
+  }
+}
+
 // Define action response type
 type ActionResponse = 
   | { success: true; message?: string; error?: never }
@@ -70,9 +87,13 @@ export async function action({ request }: ActionFunctionArgs) {
         },
       });
       
-      return json<ActionResponse>({ success: true, message: "Tier updated successfully" });
+      // Recalculate levels after update
+      await recalculateTierLevels(session.shop);
+      
+      return json<ActionResponse>({ success: true, message: "Tier updated and levels recalculated" });
     } else if (action === "create") {
       const name = formData.get("name") as string;
+      const cashbackPercent = parseFloat(formData.get("cashbackPercent") as string);
       
       // Check for duplicate name
       const existingTier = await prisma.tier.findFirst({
@@ -83,24 +104,22 @@ export async function action({ request }: ActionFunctionArgs) {
         return json<ActionResponse>({ success: false, error: "A tier with this name already exists" }, { status: 400 });
       }
       
-      const maxLevel = await prisma.tier.findFirst({
-        where: { shopDomain: session.shop },
-        orderBy: { level: 'desc' },
-        select: { level: true }
-      });
-      
+      // Create the tier with a temporary level
       await prisma.tier.create({
         data: {
           shopDomain: session.shop,
           name,
-          level: (maxLevel?.level || 0) + 1,
+          level: 999, // Temporary level, will be recalculated
           minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
-          cashbackPercent: parseFloat(formData.get("cashbackPercent") as string),
+          cashbackPercent,
           isActive: true,
         },
       });
       
-      return json<ActionResponse>({ success: true, message: "Tier created successfully" });
+      // Recalculate all levels based on cashback percentage
+      await recalculateTierLevels(session.shop);
+      
+      return json<ActionResponse>({ success: true, message: "Tier created and levels recalculated" });
     } else if (action === "delete") {
       const tierId = formData.get("tierId") as string;
       
@@ -113,22 +132,14 @@ export async function action({ request }: ActionFunctionArgs) {
         return json<ActionResponse>({ success: false, error: "Cannot delete tier with active members" }, { status: 400 });
       }
       
-      const deletedTier = await prisma.tier.delete({
+      await prisma.tier.delete({
         where: { id: tierId, shopDomain: session.shop },
       });
       
-      // Reorder remaining tiers
-      await prisma.tier.updateMany({
-        where: {
-          shopDomain: session.shop,
-          level: { gt: deletedTier.level }
-        },
-        data: {
-          level: { decrement: 1 }
-        }
-      });
+      // Recalculate remaining tier levels
+      await recalculateTierLevels(session.shop);
       
-      return json<ActionResponse>({ success: true, message: "Tier deleted successfully" });
+      return json<ActionResponse>({ success: true, message: "Tier deleted and levels recalculated" });
     }
   } catch (error) {
     return json<ActionResponse>({ success: false, error: "An error occurred. Please try again." }, { status: 500 });
@@ -184,6 +195,15 @@ export default function TierSettings() {
       color: "#666",
       margin: 0,
       fontWeight: "400"
+    },
+    infoBox: {
+      backgroundColor: "#e3f2fd",
+      border: "1px solid #90caf9",
+      borderRadius: "8px",
+      padding: "16px",
+      marginBottom: "24px",
+      fontSize: "14px",
+      color: "#1565c0"
     },
     statsGrid: {
       display: "grid",
@@ -319,6 +339,10 @@ export default function TierSettings() {
       backgroundColor: "#fff3e0",
       color: "#e65100"
     },
+    levelBadge: {
+      backgroundColor: "#e3f2fd",
+      color: "#1565c0"
+    },
     memberCount: {
       fontSize: "14px",
       color: "#666"
@@ -415,6 +439,13 @@ export default function TierSettings() {
         </div>
       )}
 
+      {/* Info Box */}
+      <div style={styles.infoBox}>
+        <strong>ℹ️ Tier Level System:</strong> Tiers are automatically ordered by cashback percentage. 
+        The tier with the highest cashback % becomes Level 1 (top tier), and so on. 
+        Levels are recalculated whenever tiers are created, updated, or deleted.
+      </div>
+
       {/* Stats */}
       <div style={styles.statsGrid}>
         <div style={styles.statCard}>
@@ -493,6 +524,7 @@ export default function TierSettings() {
                 onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
                 onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
               />
+              <span style={styles.helpText}>Higher % = Higher tier level</span>
             </div>
           </div>
           
@@ -572,8 +604,14 @@ export default function TierSettings() {
                     }}>
                       {tier.isActive ? "Active" : "Inactive"}
                     </span>
+                    <span style={{
+                      ...styles.badge,
+                      ...styles.levelBadge
+                    }}>
+                      Level {tier.level} {tier.level === 1 && "👑"}
+                    </span>
                     <span style={styles.memberCount}>
-                      Level {tier.level}
+                      {tier.cashbackPercent}% cashback
                     </span>
                     {tier.memberCount > 0 && (
                       <span style={styles.memberCount}>
