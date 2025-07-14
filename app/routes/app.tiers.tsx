@@ -74,13 +74,30 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     if (action === "update") {
       const tierId = formData.get("tierId") as string;
+      const name = formData.get("name") as string;
       const minSpend = formData.get("minSpend");
       const cashbackPercent = formData.get("cashbackPercent");
       const isActive = formData.get("isActive") === "true";
       
+      // Check if name is being changed and if it's a duplicate
+      if (name) {
+        const existingTier = await prisma.tier.findFirst({
+          where: { 
+            shopDomain: session.shop, 
+            name,
+            NOT: { id: tierId } // Exclude current tier
+          }
+        });
+        
+        if (existingTier) {
+          return json<ActionResponse>({ success: false, error: "A tier with this name already exists" }, { status: 400 });
+        }
+      }
+      
       await prisma.tier.update({
         where: { id: tierId, shopDomain: session.shop },
         data: {
+          name: name || undefined,
           minSpend: minSpend ? parseFloat(minSpend as string) : null,
           cashbackPercent: parseFloat(cashbackPercent as string),
           isActive,
@@ -349,7 +366,7 @@ export default function TierSettings() {
     },
     tierForm: {
       display: "grid",
-      gridTemplateColumns: "1fr 1fr auto",
+      gridTemplateColumns: "1.5fr 1fr 1fr auto",
       gap: "16px",
       alignItems: "flex-end"
     },
@@ -627,6 +644,20 @@ export default function TierSettings() {
                 <input type="hidden" name="tierId" value={tier.id} />
                 
                 <div style={styles.tierForm}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Tier Name</label>
+                    <input
+                      type="text"
+                      name="name"
+                      defaultValue={tier.name}
+                      required
+                      placeholder="Tier name"
+                      style={styles.input}
+                      onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                      onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+                    />
+                  </div>
+                  
                   <div style={styles.formGroup}>
                     <label style={styles.label}>Minimum Spend</label>
                     <input
