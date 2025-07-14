@@ -79,13 +79,21 @@ export async function action({ request }: ActionFunctionArgs) {
       const cashbackPercent = formData.get("cashbackPercent");
       const isActive = formData.get("isActive") === "true";
       
-      // Check if name is being changed and if it's a duplicate
-      if (name) {
+      // Get the current tier to check if name is actually changing
+      const currentTier = await prisma.tier.findUnique({
+        where: { id: tierId, shopDomain: session.shop }
+      });
+      
+      if (!currentTier) {
+        return json<ActionResponse>({ success: false, error: "Tier not found" }, { status: 404 });
+      }
+      
+      // Only check for duplicate if name is actually changing
+      if (name && name !== currentTier.name) {
         const existingTier = await prisma.tier.findFirst({
           where: { 
             shopDomain: session.shop, 
-            name,
-            NOT: { id: tierId } // Exclude current tier
+            name
           }
         });
         
@@ -97,7 +105,7 @@ export async function action({ request }: ActionFunctionArgs) {
       await prisma.tier.update({
         where: { id: tierId, shopDomain: session.shop },
         data: {
-          name: name || undefined,
+          name: name || currentTier.name, // Use existing name if not provided
           minSpend: minSpend ? parseFloat(minSpend as string) : null,
           cashbackPercent: parseFloat(cashbackPercent as string),
           isActive,
@@ -107,7 +115,7 @@ export async function action({ request }: ActionFunctionArgs) {
       // Recalculate levels after update
       await recalculateTierLevels(session.shop);
       
-      return json<ActionResponse>({ success: true, message: "Tier updated and levels recalculated" });
+      return json<ActionResponse>({ success: true, message: "Tier updated successfully" });
     } else if (action === "create") {
       const name = formData.get("name") as string;
       const cashbackPercent = parseFloat(formData.get("cashbackPercent") as string);
