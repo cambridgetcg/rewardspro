@@ -78,13 +78,13 @@ export default function App() {
           Dashboard
         </Link>
         <Link to="/app/store-credit" prefetch="intent">
-          Manage Store Credit
+          Credits
         </Link>
         <Link to="/app/settings/tiers" prefetch="intent">
-          Edit Tiers
+          Tiers
         </Link>
         <Link to="/app/customers/tiers" prefetch="intent">
-          Customer Tiers
+          Customers
         </Link>
       </NavMenu>
       
