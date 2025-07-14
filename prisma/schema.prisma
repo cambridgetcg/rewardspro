@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
 }
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
 model Session {
   id            String    @id
   shop          String
@@ -21,9 +23,11 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
+  
   @@index([shop])
   @@index([expires])
 }
+
 model Customer {
   id                String      @id @default(uuid())
   shopDomain        String      
@@ -33,12 +37,15 @@ model Customer {
   totalEarned       Float       @default(0)
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
+  
   transactions      CashbackTransaction[]
   membershipHistory CustomerMembership[]
+  
   @@unique([shopDomain, shopifyCustomerId])
   @@index([shopDomain])
   @@index([email])
 }
+
 model CashbackTransaction {
   id                    String      @id @default(uuid())
   shopDomain            String      
@@ -50,26 +57,33 @@ model CashbackTransaction {
   status                TransactionStatus @default(COMPLETED)
   shopifyTransactionId  String?     
   createdAt             DateTime    @default(now())
+  
   customer              Customer    @relation(fields: [customerId], references: [id])
+  
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopDomain])
   @@index([customerId])
   @@index([createdAt])
 }
+
 model Tier {
-  id                String      @id @default(uuid())
+  id                String              @id @default(uuid())
   shopDomain        String      
   name              String      
   level             Int         
   minSpend          Float?      
   cashbackPercent   Float       
-  isActive          Boolean     @default(true)
-  createdAt         DateTime    @default(now())
+  evaluationPeriod  EvaluationPeriod    @default(ANNUAL)
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  
   customerMemberships CustomerMembership[]
+  
   @@unique([shopDomain, level])
   @@unique([shopDomain, name])
   @@index([shopDomain])
 }
+
 model CustomerMembership {
   id                String      @id @default(uuid())
   customerId        String
@@ -77,14 +91,22 @@ model CustomerMembership {
   startDate         DateTime    @default(now())
   isActive          Boolean     @default(true)
   createdAt         DateTime    @default(now())
+  
   customer          Customer    @relation(fields: [customerId], references: [id])
   tier              Tier        @relation(fields: [tierId], references: [id])
+  
   @@unique([customerId, isActive])
   @@index([customerId])
   @@index([tierId])
 }
+
 enum TransactionStatus {
   COMPLETED
   SYNCED_TO_SHOPIFY
   SHOPIFY_SYNC_FAILED
+}
+
+enum EvaluationPeriod {
+  ANNUAL         // 12 months rolling (default)
+  LIFETIME       // All-time spending, never expires
 }
