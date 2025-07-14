@@ -4,6 +4,7 @@ import { useLoaderData, Form, useNavigation, useFetcher, useActionData } from "@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { useState, useEffect } from "react";
+import { EvaluationPeriod } from "@prisma/client";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -108,6 +109,7 @@ export async function action({ request }: ActionFunctionArgs) {
           name: name || currentTier.name, // Use existing name if not provided
           minSpend: minSpend ? parseFloat(minSpend as string) : null,
           cashbackPercent: parseFloat(cashbackPercent as string),
+          evaluationPeriod: formData.get("evaluationPeriod") as EvaluationPeriod || currentTier.evaluationPeriod,
           isActive,
         },
       });
@@ -119,6 +121,7 @@ export async function action({ request }: ActionFunctionArgs) {
     } else if (action === "create") {
       const name = formData.get("name") as string;
       const cashbackPercent = parseFloat(formData.get("cashbackPercent") as string);
+      const evaluationPeriod = formData.get("evaluationPeriod") as EvaluationPeriod;
       
       // Check for duplicate name
       const existingTier = await prisma.tier.findFirst({
@@ -137,6 +140,7 @@ export async function action({ request }: ActionFunctionArgs) {
           level: 999, // Temporary level, will be recalculated
           minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
           cashbackPercent,
+          evaluationPeriod: evaluationPeriod || EvaluationPeriod.ANNUAL,
           isActive: true,
         },
       });
@@ -374,7 +378,7 @@ export default function TierSettings() {
     },
     tierForm: {
       display: "grid",
-      gridTemplateColumns: "1.5fr 1fr 1fr auto",
+      gridTemplateColumns: "1.5fr 1fr 1fr 1.2fr auto",
       gap: "16px",
       alignItems: "flex-end"
     },
@@ -551,6 +555,21 @@ export default function TierSettings() {
               />
               <span style={styles.helpText}>Higher % = Higher tier level</span>
             </div>
+            
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Evaluation Period</label>
+              <select
+                name="evaluationPeriod"
+                required
+                style={styles.input}
+                onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+              >
+                <option value="ANNUAL">12-month rolling</option>
+                <option value="LIFETIME">Lifetime (never expires)</option>
+              </select>
+              <span style={styles.helpText}>How far back to calculate spending</span>
+            </div>
           </div>
           
           <button
@@ -638,6 +657,9 @@ export default function TierSettings() {
                     <span style={styles.memberCount}>
                       {tier.cashbackPercent}% cashback
                     </span>
+                    <span style={styles.memberCount}>
+                      • {tier.evaluationPeriod === 'LIFETIME' ? 'Lifetime' : '12-month'} evaluation
+                    </span>
                     {tier.memberCount > 0 && (
                       <span style={styles.memberCount}>
                         • {tier.memberCount} {tier.memberCount === 1 ? 'member' : 'members'}
@@ -695,6 +717,20 @@ export default function TierSettings() {
                       onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
                       onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
                     />
+                  </div>
+                  
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Evaluation Period</label>
+                    <select
+                      name="evaluationPeriod"
+                      defaultValue={tier.evaluationPeriod}
+                      style={styles.input}
+                      onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
+                      onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+                    >
+                      <option value="ANNUAL">12-month rolling</option>
+                      <option value="LIFETIME">Lifetime (never expires)</option>
+                    </select>
                   </div>
                   
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
