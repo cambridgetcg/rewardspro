@@ -4,13 +4,18 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { useLoaderData, Form, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { TransactionStatus } from "@prisma/client";
 import { assignTierManually, evaluateCustomerTier } from "../services/customer-tier.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   
-  // Get all customers with their current tier
+  // Get the shop domain from the session
+  const shopDomain = session.shop;
+  
+  // Get all customers for this shop with their current tier
   const customers = await prisma.customer.findMany({
+    where: { shopDomain },
     include: {
       membershipHistory: {
         where: { isActive: true },
@@ -19,16 +24,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
       transactions: {
         where: {
           createdAt: { gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) }, // Last year
-          status: { in: ["COMPLETED", "SYNCED_TO_SHOPIFY"] }
+          status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
         }
       }
     },
     orderBy: { createdAt: 'desc' }
   });
 
-  // Get all tiers for the dropdown
+  // Get all tiers for this shop for the dropdown
   const tiers = await prisma.tier.findMany({
-    where: { isActive: true },
+    where: { 
+      shopDomain,
+      isActive: true 
+    },
     orderBy: { level: 'asc' }
   });
 
@@ -42,7 +50,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       email: customer.email,
       shopifyCustomerId: customer.shopifyCustomerId,
       currentTier: currentMembership?.tier,
-      membershipSource: currentMembership?.source,
       annualSpending,
       totalEarned: customer.totalEarned,
       storeCredit: customer.storeCredit
@@ -53,7 +60,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+  const shopDomain = session.shop;
   
   const formData = await request.formData();
   const action = formData.get("_action");
@@ -61,14 +69,16 @@ export async function action({ request }: ActionFunctionArgs) {
   
   if (action === "assignTier") {
     const tierId = formData.get("tierId") as string;
-    await assignTierManually(customerId, tierId);
+    await assignTierManually(customerId, tierId, shopDomain);
   } else if (action === "evaluateTier") {
-    await evaluateCustomerTier(customerId);
+    await evaluateCustomerTier(customerId, shopDomain);
   } else if (action === "evaluateAll") {
-    // Evaluate all customers
-    const customers = await prisma.customer.findMany();
+    // Evaluate all customers for this shop
+    const customers = await prisma.customer.findMany({
+      where: { shopDomain }
+    });
     for (const customer of customers) {
-      await evaluateCustomerTier(customer.id);
+      await evaluateCustomerTier(customer.id, shopDomain);
     }
   }
   
@@ -109,7 +119,6 @@ export default function CustomerTiers() {
             <tr style={{ backgroundColor: "#f5f5f5" }}>
               <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Customer</th>
               <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Current Tier</th>
-              <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Source</th>
               <th style={{ padding: "12px", textAlign: "right", borderBottom: "2px solid #ddd" }}>Annual Spending</th>
               <th style={{ padding: "12px", textAlign: "right", borderBottom: "2px solid #ddd" }}>Total Earned</th>
               <th style={{ padding: "12px", textAlign: "right", borderBottom: "2px solid #ddd" }}>Store Credit</th>
@@ -125,23 +134,20 @@ export default function CustomerTiers() {
                 </td>
                 <td style={{ padding: "12px" }}>
                   {customer.currentTier ? (
-                    <span style={{ 
-                      backgroundColor: customer.currentTier.color || "#f5f5f5",
-                      color: customer.currentTier.color ? "white" : "black",
-                      padding: "4px 8px",
-                      borderRadius: "4px",
-                      fontSize: "14px"
-                    }}>
-                      {customer.currentTier.displayName}
-                    </span>
+                    <div>
+                      <span style={{ 
+                        fontSize: "14px",
+                        fontWeight: "500"
+                      }}>
+                        {customer.currentTier.name}
+                      </span>
+                      <div style={{ fontSize: "12px", color: "#666" }}>
+                        {customer.currentTier.cashbackPercent}% cashback
+                      </div>
+                    </div>
                   ) : (
                     <span style={{ color: "#999" }}>No tier</span>
                   )}
-                </td>
-                <td style={{ padding: "12px" }}>
-                  <span style={{ fontSize: "14px", color: "#666" }}>
-                    {customer.membershipSource?.replace('_', ' ') || 'N/A'}
-                  </span>
                 </td>
                 <td style={{ padding: "12px", textAlign: "right" }}>
                   ${customer.annualSpending.toFixed(2)}
@@ -190,7 +196,7 @@ export default function CustomerTiers() {
                         <option value="">Select tier...</option>
                         {tiers.map(tier => (
                           <option key={tier.id} value={tier.id}>
-                            {tier.displayName}
+                            {tier.name} ({tier.cashbackPercent}%)
                           </option>
                         ))}
                       </select>

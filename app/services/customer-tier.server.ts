@@ -1,5 +1,6 @@
 // app/services/customer-tier.server.ts
 import prisma from "../db.server";
+import { TransactionStatus } from "@prisma/client";
 import type { Customer, Tier, CustomerMembership } from "@prisma/client";
 
 // Assign initial tier to new customer
@@ -41,7 +42,7 @@ export async function evaluateCustomerTier(customerId: string, shopDomain: strin
       },
       transactions: {
         where: { 
-          status: { in: ["COMPLETED", "SYNCED_TO_SHOPIFY"] }
+          status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
         }
       }
     }
@@ -148,7 +149,7 @@ export async function getCustomerTierInfo(customerId: string, shopDomain: string
       where: {
         customerId,
         shopDomain,
-        status: { in: ["COMPLETED", "SYNCED_TO_SHOPIFY"] }
+        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
       },
       _sum: { orderAmount: true }
     });
