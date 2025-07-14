@@ -312,7 +312,7 @@ export default function Dashboard() {
       minHeight: "100vh"
     },
     header: {
-      marginBottom: "32px"
+      marginBottom: "40px"
     },
     title: {
       fontSize: "32px",
@@ -328,7 +328,7 @@ export default function Dashboard() {
     },
     metricsGrid: {
       display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+      gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
       gap: "24px",
       marginBottom: "40px"
     },
@@ -336,27 +336,24 @@ export default function Dashboard() {
       backgroundColor: "#f8f9fa",
       padding: "24px",
       borderRadius: "12px",
-      border: "1px solid #e0e0e0",
-      transition: "box-shadow 0.2s"
+      textAlign: "center" as const
     },
     metricTitle: {
       fontSize: "14px",
-      fontWeight: "500",
       color: "#666",
-      marginBottom: "8px",
-      textTransform: "uppercase" as const,
-      letterSpacing: "0.5px"
+      margin: 0,
+      marginBottom: "8px"
     },
     metricValue: {
       fontSize: "32px",
       fontWeight: "600",
-      margin: "0",
+      margin: "0 0 4px 0",
       color: "#1a1a1a"
     },
     metricSubtext: {
       fontSize: "14px",
       color: "#666",
-      marginTop: "4px"
+      margin: 0
     },
     metricChange: {
       fontSize: "14px",
@@ -377,24 +374,24 @@ export default function Dashboard() {
     },
     card: {
       backgroundColor: "white",
-      border: "1px solid #e0e0e0",
-      borderRadius: "12px",
       padding: "24px",
-      height: "100%"
+      borderRadius: "12px",
+      border: "1px solid #e0e0e0",
+      transition: "box-shadow 0.2s"
     },
     cardTitle: {
       fontSize: "20px",
       fontWeight: "600",
-      marginBottom: "20px",
+      margin: "0 0 24px 0",
       color: "#1a1a1a"
     },
     tierBar: {
       display: "flex",
-      height: "48px",
+      height: "40px",
       borderRadius: "8px",
       overflow: "hidden",
       backgroundColor: "#f5f5f5",
-      marginBottom: "20px"
+      marginBottom: "24px"
     },
     tierSegment: {
       display: "flex",
@@ -404,41 +401,60 @@ export default function Dashboard() {
       textDecoration: "none",
       fontSize: "14px",
       fontWeight: "500",
-      transition: "opacity 0.2s",
-      cursor: "pointer"
+      transition: "all 0.2s",
+      cursor: "pointer",
+      position: "relative" as const
     },
     tierLegend: {
       display: "flex",
       flexWrap: "wrap" as const,
-      gap: "16px"
+      gap: "20px"
     },
     tierLegendItem: {
       display: "flex",
       alignItems: "center",
       gap: "8px",
-      fontSize: "14px"
+      fontSize: "14px",
+      color: "#666"
     },
     tierColor: {
       width: "16px",
       height: "16px",
       borderRadius: "4px"
     },
+    activityList: {
+      display: "flex",
+      flexDirection: "column" as const,
+      gap: "12px"
+    },
     activityItem: {
-      padding: "12px 0",
-      borderBottom: "1px solid #f0f0f0",
-      fontSize: "14px"
+      padding: "16px",
+      backgroundColor: "#f8f9fa",
+      borderRadius: "8px",
+      fontSize: "14px",
+      transition: "background-color 0.2s"
+    },
+    activityMessage: {
+      color: "#1a1a1a",
+      marginBottom: "4px"
     },
     activityTime: {
       fontSize: "12px",
-      color: "#999",
-      marginTop: "4px"
+      color: "#999"
+    },
+    customerList: {
+      display: "flex",
+      flexDirection: "column" as const,
+      gap: "12px"
     },
     customerRow: {
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
-      padding: "12px 0",
-      borderBottom: "1px solid #f0f0f0"
+      padding: "16px",
+      backgroundColor: "#f8f9fa",
+      borderRadius: "8px",
+      transition: "background-color 0.2s"
     },
     customerInfo: {
       flex: 1
@@ -446,10 +462,11 @@ export default function Dashboard() {
     customerEmail: {
       fontSize: "14px",
       fontWeight: "500",
-      color: "#1a1a1a"
+      color: "#1a1a1a",
+      marginBottom: "4px"
     },
-    customerSpending: {
-      fontSize: "14px",
+    customerStats: {
+      fontSize: "12px",
       color: "#666"
     },
     tierBadge: {
@@ -462,14 +479,46 @@ export default function Dashboard() {
     },
     emptyState: {
       textAlign: "center" as const,
-      padding: "40px",
-      color: "#999"
+      padding: "60px 20px",
+      backgroundColor: "#f8f9fa",
+      borderRadius: "12px",
+      border: "1px solid #e0e0e0"
+    },
+    emptyStateTitle: {
+      fontSize: "20px",
+      fontWeight: "600",
+      marginBottom: "8px",
+      color: "#1a1a1a"
+    },
+    emptyStateText: {
+      fontSize: "16px",
+      color: "#666",
+      marginBottom: "24px"
     },
     link: {
-      color: "#3B82F6",
+      color: "#1a1a1a",
       textDecoration: "none",
       fontSize: "14px",
-      fontWeight: "500"
+      fontWeight: "500",
+      padding: "10px 20px",
+      backgroundColor: "#1a1a1a",
+      border: "none",
+      borderRadius: "8px",
+      display: "inline-block",
+      transition: "opacity 0.2s"
+    },
+    sectionHeader: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: "24px"
+    },
+    viewAllLink: {
+      color: "#1a1a1a",
+      textDecoration: "none",
+      fontSize: "14px",
+      fontWeight: "500",
+      transition: "opacity 0.2s"
     }
   };
 
@@ -487,32 +536,31 @@ export default function Dashboard() {
           title="Total Customers"
           value={metrics.totalCustomers.toLocaleString()}
           change={metrics.customerGrowth}
-          changeLabel="vs last 30 days"
+          changeLabel="30 days"
           styles={styles}
         />
         <MetricCard
           title="Cashback This Month"
-          value={`$${metrics.totalCashbackThisMonth.toFixed(2)}`}
-          subtitle={`$${metrics.totalCashbackAllTime.toFixed(2)} all time`}
+          value={`${metrics.totalCashbackThisMonth.toFixed(2)}`}
+          subtitle={`${metrics.totalCashbackAllTime.toFixed(2)} all time`}
           styles={styles}
         />
         <MetricCard
           title="Active Store Credit"
-          value={`$${metrics.activeStoreCredit.toFixed(2)}`}
-          subtitle="Outstanding liability"
+          value={`${metrics.activeStoreCredit.toFixed(2)}`}
+          subtitle="(Liability)"
           styles={styles}
         />
         <MetricCard
-          title="Average Order Value"
-          value={`$${metrics.averageOrderValue.toFixed(2)}`}
+          title="Avg Order Value"
+          value={`${metrics.averageOrderValue.toFixed(2)}`}
           change={metrics.aovChange}
-          changeLabel="vs last 30 days"
           styles={styles}
         />
         <MetricCard
           title="Total Transactions"
           value={metrics.totalTransactions.toLocaleString()}
-          subtitle={`${metrics.conversionRate}% conversion rate`}
+          subtitle={`${metrics.conversionRate}% conversion`}
           styles={styles}
         />
       </div>
@@ -520,8 +568,12 @@ export default function Dashboard() {
       {/* Tier Distribution and Activity Grid */}
       <div style={styles.grid}>
         {/* Tier Distribution */}
-        <div style={styles.card}>
-          <h2 style={styles.cardTitle}>Customer Distribution by Tier</h2>
+        <div 
+          style={styles.card}
+          onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'}
+          onMouseOut={(e) => e.currentTarget.style.boxShadow = 'none'}
+        >
+          <h2 style={styles.cardTitle}>Customer Distribution</h2>
           
           {tierDistribution.length > 0 ? (
             <>
@@ -553,7 +605,7 @@ export default function Dashboard() {
                       backgroundColor: getDefaultColor(index)
                     }} />
                     <span>
-                      {tier.tierName}: {tier.memberCount} ({tier.percentage}%) • {tier.cashbackPercent}%
+                      {tier.tierName}: {tier.memberCount} ({tier.percentage}%)
                     </span>
                   </div>
                 ))}
@@ -561,23 +613,38 @@ export default function Dashboard() {
             </>
           ) : (
             <div style={styles.emptyState}>
-              <p>No tier data available</p>
-              <Link to="/app/tiers" style={styles.link}>
-                Configure Tiers →
+              <h3 style={styles.emptyStateTitle}>No tiers configured</h3>
+              <p style={styles.emptyStateText}>Create tiers to start organizing customers</p>
+              <Link 
+                to="/app/tiers" 
+                style={styles.link}
+                onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
+                onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+              >
+                Configure Tiers
               </Link>
             </div>
           )}
         </div>
 
         {/* Recent Activity */}
-        <div style={styles.card}>
+        <div 
+          style={styles.card}
+          onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'}
+          onMouseOut={(e) => e.currentTarget.style.boxShadow = 'none'}
+        >
           <h2 style={styles.cardTitle}>Recent Activity</h2>
           
           {recentActivity.length > 0 ? (
-            <div>
+            <div style={styles.activityList}>
               {recentActivity.map((activity) => (
-                <div key={activity.id} style={styles.activityItem}>
-                  <div>{activity.message}</div>
+                <div 
+                  key={activity.id} 
+                  style={styles.activityItem}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f0f0f0'}
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                >
+                  <div style={styles.activityMessage}>{activity.message}</div>
                   <div style={styles.activityTime}>
                     {format(new Date(activity.timestamp), "MMM d, h:mm a")}
                   </div>
@@ -586,33 +653,43 @@ export default function Dashboard() {
             </div>
           ) : (
             <div style={styles.emptyState}>
-              <p>No recent activity</p>
+              <h3 style={styles.emptyStateTitle}>No recent activity</h3>
+              <p style={styles.emptyStateText}>Activity will appear here as customers engage</p>
             </div>
           )}
         </div>
       </div>
 
       {/* Top Customers */}
-      <div style={styles.card}>
-        <div style={{ 
-          display: "flex", 
-          justifyContent: "space-between", 
-          alignItems: "center",
-          marginBottom: "20px"
-        }}>
+      <div 
+        style={styles.card}
+        onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'}
+        onMouseOut={(e) => e.currentTarget.style.boxShadow = 'none'}
+      >
+        <div style={styles.sectionHeader}>
           <h2 style={styles.cardTitle}>Top Customers</h2>
-          <Link to="/app/customers/tiers" style={styles.link}>
+          <Link 
+            to="/app/customers/tiers" 
+            style={styles.viewAllLink}
+            onMouseOver={(e) => e.currentTarget.style.opacity = '0.6'}
+            onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+          >
             View All →
           </Link>
         </div>
         
         {topCustomers.length > 0 ? (
-          <div>
+          <div style={styles.customerList}>
             {topCustomers.map((customer) => (
-              <div key={customer.id} style={styles.customerRow}>
+              <div 
+                key={customer.id} 
+                style={styles.customerRow}
+                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f0f0f0'}
+                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+              >
                 <div style={styles.customerInfo}>
                   <div style={styles.customerEmail}>{customer.email}</div>
-                  <div style={styles.customerSpending}>
+                  <div style={styles.customerStats}>
                     Lifetime: ${customer.totalSpending.toFixed(2)} • Earned: ${customer.totalEarned.toFixed(2)}
                   </div>
                 </div>
@@ -626,7 +703,8 @@ export default function Dashboard() {
           </div>
         ) : (
           <div style={styles.emptyState}>
-            <p>No customer data available yet</p>
+            <h3 style={styles.emptyStateTitle}>No customers yet</h3>
+            <p style={styles.emptyStateText}>Your top customers will appear here</p>
           </div>
         )}
       </div>
@@ -651,13 +729,9 @@ function MetricCard({
   styles: any;
 }) {
   return (
-    <div 
-      style={styles.metricCard}
-      onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'}
-      onMouseOut={(e) => e.currentTarget.style.boxShadow = 'none'}
-    >
-      <h3 style={styles.metricTitle}>{title}</h3>
-      <p style={styles.metricValue}>{value}</p>
+    <div style={styles.metricCard}>
+      <h3 style={styles.metricValue}>{value}</h3>
+      <p style={styles.metricTitle}>{title}</p>
       {subtitle && (
         <p style={styles.metricSubtext}>{subtitle}</p>
       )}
