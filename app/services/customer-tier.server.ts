@@ -93,18 +93,15 @@ export async function evaluateCustomerTier(customerId: string, shopDomain: strin
   if (!currentMembership || currentMembership.tierId !== qualifiedTier.id) {
     // Use a transaction to ensure atomicity
     const result = await prisma.$transaction(async (tx) => {
-      // First, deactivate ALL existing active memberships for this customer
-      await tx.customerMembership.updateMany({
+      // Delete all existing active memberships for this customer
+      await tx.customerMembership.deleteMany({
         where: {
           customerId,
           isActive: true
-        },
-        data: {
-          isActive: false
         }
       });
 
-      // Then create the new membership
+      // Create the new membership
       const newMembership = await tx.customerMembership.create({
         data: {
           customerId,
@@ -202,14 +199,11 @@ export async function assignTierManually(
 
   // Use a transaction to ensure atomicity
   const membership = await prisma.$transaction(async (tx) => {
-    // Deactivate all current memberships
-    await tx.customerMembership.updateMany({
+    // Delete all active memberships
+    await tx.customerMembership.deleteMany({
       where: {
         customerId,
         isActive: true
-      },
-      data: {
-        isActive: false
       }
     });
 
