@@ -91,27 +91,33 @@ export async function evaluateCustomerTier(customerId: string, shopDomain: strin
 
   // Update if tier changed
   if (!currentMembership || currentMembership.tierId !== qualifiedTier.id) {
-    // Deactivate current membership
-    if (currentMembership) {
-      await prisma.customerMembership.update({
-        where: { id: currentMembership.id },
-        data: { 
+    // Use a transaction to ensure atomicity
+    const result = await prisma.$transaction(async (tx) => {
+      // First, deactivate ALL existing active memberships for this customer
+      await tx.customerMembership.updateMany({
+        where: {
+          customerId,
+          isActive: true
+        },
+        data: {
           isActive: false
         }
       });
-    }
 
-    // Create new membership
-    const newMembership = await prisma.customerMembership.create({
-      data: {
-        customerId,
-        tierId: qualifiedTier.id,
-        isActive: true,
-      },
-      include: { tier: true }
+      // Then create the new membership
+      const newMembership = await tx.customerMembership.create({
+        data: {
+          customerId,
+          tierId: qualifiedTier.id,
+          isActive: true,
+        },
+        include: { tier: true }
+      });
+
+      return newMembership;
     });
 
-    return newMembership;
+    return result;
   }
 
   return currentMembership;
@@ -194,25 +200,30 @@ export async function assignTierManually(
     throw new Error("Tier not found or belongs to different shop");
   }
 
-  // Deactivate current membership
-  await prisma.customerMembership.updateMany({
-    where: {
-      customerId,
-      isActive: true
-    },
-    data: {
-      isActive: false
-    }
-  });
+  // Use a transaction to ensure atomicity
+  const membership = await prisma.$transaction(async (tx) => {
+    // Deactivate all current memberships
+    await tx.customerMembership.updateMany({
+      where: {
+        customerId,
+        isActive: true
+      },
+      data: {
+        isActive: false
+      }
+    });
 
-  // Create new membership
-  const membership = await prisma.customerMembership.create({
-    data: {
-      customerId,
-      tierId,
-      isActive: true,
-    },
-    include: { tier: true }
+    // Create new membership
+    const newMembership = await tx.customerMembership.create({
+      data: {
+        customerId,
+        tierId,
+        isActive: true,
+      },
+      include: { tier: true }
+    });
+
+    return newMembership;
   });
 
   return membership;
