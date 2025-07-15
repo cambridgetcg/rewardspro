@@ -11,7 +11,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   
   const tiers = await prisma.tier.findMany({
     where: { shopDomain: session.shop },
-    orderBy: { level: "asc" },
+    orderBy: { cashbackPercent: "desc" }, // Highest cashback first
   });
 
   // Get member count for each tier
@@ -42,23 +42,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       totalCashback: totalCashback._sum.cashbackAmount || 0
     }
   });
-}
-
-// Helper function to recalculate all tier levels based on cashback percentage
-async function recalculateTierLevels(shopDomain: string) {
-  // Get all tiers sorted by cashback percentage (highest first)
-  const tiers = await prisma.tier.findMany({
-    where: { shopDomain },
-    orderBy: { cashbackPercent: 'desc' }
-  });
-
-  // Update each tier's level based on cashback percentage ranking
-  for (let i = 0; i < tiers.length; i++) {
-    await prisma.tier.update({
-      where: { id: tiers[i].id },
-      data: { level: i + 1 }
-    });
-  }
 }
 
 // Define action response type
@@ -106,16 +89,13 @@ export async function action({ request }: ActionFunctionArgs) {
       await prisma.tier.update({
         where: { id: tierId, shopDomain: session.shop },
         data: {
-          name: name || currentTier.name, // Use existing name if not provided
+          name: name || currentTier.name,
           minSpend: minSpend ? parseFloat(minSpend as string) : null,
           cashbackPercent: parseFloat(cashbackPercent as string),
           evaluationPeriod: formData.get("evaluationPeriod") as EvaluationPeriod || currentTier.evaluationPeriod,
           isActive,
         },
       });
-      
-      // Recalculate levels after update
-      await recalculateTierLevels(session.shop);
       
       return json<ActionResponse>({ success: true, message: "Tier updated successfully" });
     } else if (action === "create") {
@@ -132,12 +112,10 @@ export async function action({ request }: ActionFunctionArgs) {
         return json<ActionResponse>({ success: false, error: "A tier with this name already exists" }, { status: 400 });
       }
       
-      // Create the tier with a temporary level
       await prisma.tier.create({
         data: {
           shopDomain: session.shop,
           name,
-          level: 999, // Temporary level, will be recalculated
           minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
           cashbackPercent,
           evaluationPeriod: evaluationPeriod || EvaluationPeriod.ANNUAL,
@@ -145,10 +123,7 @@ export async function action({ request }: ActionFunctionArgs) {
         },
       });
       
-      // Recalculate all levels based on cashback percentage
-      await recalculateTierLevels(session.shop);
-      
-      return json<ActionResponse>({ success: true, message: "Tier created and levels recalculated" });
+      return json<ActionResponse>({ success: true, message: "Tier created successfully" });
     } else if (action === "delete") {
       const tierId = formData.get("tierId") as string;
       
@@ -165,12 +140,10 @@ export async function action({ request }: ActionFunctionArgs) {
         where: { id: tierId, shopDomain: session.shop },
       });
       
-      // Recalculate remaining tier levels
-      await recalculateTierLevels(session.shop);
-      
-      return json<ActionResponse>({ success: true, message: "Tier deleted and levels recalculated" });
+      return json<ActionResponse>({ success: true, message: "Tier deleted successfully" });
     }
   } catch (error) {
+    console.error('Tier operation error:', error);
     return json<ActionResponse>({ success: false, error: "An error occurred. Please try again." }, { status: 500 });
   }
   
@@ -368,9 +341,9 @@ export default function TierSettings() {
       backgroundColor: "#fff3e0",
       color: "#e65100"
     },
-    levelBadge: {
-      backgroundColor: "#e3f2fd",
-      color: "#1565c0"
+    tierIcon: {
+      fontSize: "20px",
+      marginRight: "4px"
     },
     memberCount: {
       fontSize: "14px",
@@ -444,6 +417,14 @@ export default function TierSettings() {
     }
   };
 
+  // Helper function to get tier icon based on cashback percentage
+  const getTierIcon = (cashbackPercent: number) => {
+    if (cashbackPercent >= 10) return "👑";
+    if (cashbackPercent >= 7) return "⭐";
+    if (cashbackPercent >= 5) return "✨";
+    return "";
+  };
+
   return (
     <div style={styles.container}>
       {/* Header */}
@@ -470,9 +451,9 @@ export default function TierSettings() {
 
       {/* Info Box */}
       <div style={styles.infoBox}>
-        <strong>ℹ️ Tier Level System:</strong> Tiers are automatically ordered by cashback percentage. 
-        The tier with the highest cashback % becomes Level 1 (top tier), and so on. 
-        Levels are recalculated whenever tiers are created, updated, or deleted.
+        <strong>ℹ️ How Tiers Work:</strong> Tiers are automatically ordered by cashback percentage. 
+        Customers qualify for the highest tier where they meet the minimum spending requirement.
+        Higher cashback percentages appear first.
       </div>
 
       {/* Stats */}
@@ -553,7 +534,6 @@ export default function TierSettings() {
                 onFocus={(e) => e.target.style.borderColor = '#1a1a1a'}
                 onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
               />
-              <span style={styles.helpText}>Higher % = Higher tier level</span>
             </div>
             
             <div style={styles.formGroup}>
@@ -600,7 +580,7 @@ export default function TierSettings() {
             </button>
           </div>
         ) : (
-          tiers.map((tier) => (
+          tiers.map((tier, index) => (
             <div 
               key={tier.id} 
               style={{
@@ -640,19 +620,16 @@ export default function TierSettings() {
               
               <div style={styles.tierHeader}>
                 <div>
-                  <h3 style={styles.tierName}>{tier.name}</h3>
+                  <h3 style={styles.tierName}>
+                    <span style={styles.tierIcon}>{getTierIcon(tier.cashbackPercent)}</span>
+                    {tier.name}
+                  </h3>
                   <div style={styles.tierMeta}>
                     <span style={{
                       ...styles.badge,
                       ...(tier.isActive ? styles.activeBadge : styles.inactiveBadge)
                     }}>
                       {tier.isActive ? "Active" : "Inactive"}
-                    </span>
-                    <span style={{
-                      ...styles.badge,
-                      ...styles.levelBadge
-                    }}>
-                      Level {tier.level} {tier.level === 1 && "👑"}
                     </span>
                     <span style={styles.memberCount}>
                       {tier.cashbackPercent}% cashback
@@ -663,6 +640,11 @@ export default function TierSettings() {
                     {tier.memberCount > 0 && (
                       <span style={styles.memberCount}>
                         • {tier.memberCount} {tier.memberCount === 1 ? 'member' : 'members'}
+                      </span>
+                    )}
+                    {index === 0 && (
+                      <span style={styles.memberCount}>
+                        • Top tier
                       </span>
                     )}
                   </div>
