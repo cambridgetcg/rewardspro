@@ -32,13 +32,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
     orderBy: { createdAt: 'desc' }
   });
 
-  // Get all tiers for this shop for the dropdown
+  // Get all tiers for this shop for the dropdown - order by cashback descending
   const tiers = await prisma.tier.findMany({
     where: { 
       shopDomain,
       isActive: true 
     },
-    orderBy: { level: 'asc' }
+    orderBy: { cashbackPercent: 'desc' } // Highest cashback first
   });
 
   // Calculate annual spending for each customer
@@ -126,6 +126,7 @@ export default function CustomerTiers() {
   const navigation = useNavigation();
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [tierFilter, setTierFilter] = useState<string>("all");
   const isSubmitting = navigation.state === "submitting";
 
   // Show notifications from action data
@@ -141,11 +142,25 @@ export default function CustomerTiers() {
     }
   }, [actionData]);
 
-  // Filter customers based on search
-  const filteredCustomers = customers.filter(customer => 
-    customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    customer.shopifyCustomerId.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter customers based on search and tier
+  const filteredCustomers = customers.filter(customer => {
+    const matchesSearch = customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      customer.shopifyCustomerId.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesTier = tierFilter === "all" || 
+      (tierFilter === "no-tier" && !customer.currentTier) ||
+      (customer.currentTier?.id === tierFilter);
+    
+    return matchesSearch && matchesTier;
+  });
+
+  // Helper function to get tier icon
+  const getTierIcon = (cashbackPercent: number) => {
+    if (cashbackPercent >= 10) return "👑";
+    if (cashbackPercent >= 7) return "⭐";
+    if (cashbackPercent >= 5) return "✨";
+    return "";
+  };
 
   const styles = {
     container: {
@@ -228,7 +243,16 @@ export default function CustomerTiers() {
       backgroundColor: "white",
       transition: "border-color 0.2s",
       outline: "none",
-      minWidth: "300px"
+      minWidth: "250px"
+    },
+    filterSelect: {
+      padding: "10px 14px",
+      border: "1px solid #e0e0e0",
+      borderRadius: "8px",
+      fontSize: "15px",
+      backgroundColor: "white",
+      cursor: "pointer",
+      minWidth: "180px"
     },
     customerCard: {
       backgroundColor: "white",
@@ -265,7 +289,10 @@ export default function CustomerTiers() {
       borderRadius: "20px",
       fontWeight: "500",
       backgroundColor: "#e8f5e9",
-      color: "#2e7d32"
+      color: "#2e7d32",
+      display: "flex",
+      alignItems: "center",
+      gap: "4px"
     },
     noTierBadge: {
       fontSize: "14px",
@@ -368,6 +395,11 @@ export default function CustomerTiers() {
       fontSize: "16px",
       color: "#666",
       marginBottom: "24px"
+    },
+    filterInfo: {
+      fontSize: "14px",
+      color: "#666",
+      marginBottom: "16px"
     }
   };
 
@@ -424,6 +456,21 @@ export default function CustomerTiers() {
             onFocus={(e) => e.currentTarget.style.borderColor = '#1a1a1a'}
             onBlur={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
           />
+          <select
+            value={tierFilter}
+            onChange={(e) => setTierFilter(e.target.value)}
+            style={styles.filterSelect}
+            onFocus={(e) => e.currentTarget.style.borderColor = '#1a1a1a'}
+            onBlur={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
+          >
+            <option value="all">All Tiers</option>
+            <option value="no-tier">No Tier</option>
+            {tiers.map(tier => (
+              <option key={tier.id} value={tier.id}>
+                {tier.name} ({tier.cashbackPercent}%)
+              </option>
+            ))}
+          </select>
           <Form method="post">
             <input type="hidden" name="_action" value="evaluateAll" />
             <button
@@ -443,16 +490,26 @@ export default function CustomerTiers() {
         </div>
       </div>
 
+      {/* Filter info */}
+      {(searchTerm || tierFilter !== "all") && (
+        <p style={styles.filterInfo}>
+          Showing {filteredCustomers.length} of {customers.length} customers
+          {tierFilter !== "all" && tierFilter !== "no-tier" && 
+            ` in ${tiers.find(t => t.id === tierFilter)?.name || "selected"} tier`}
+          {tierFilter === "no-tier" && " with no tier assigned"}
+        </p>
+      )}
+
       {/* Customer List */}
       <div>
         {filteredCustomers.length === 0 ? (
           <div style={styles.emptyState}>
             <h3 style={styles.emptyStateTitle}>
-              {searchTerm ? "No customers found" : "No customers yet"}
+              {searchTerm || tierFilter !== "all" ? "No customers found" : "No customers yet"}
             </h3>
             <p style={styles.emptyStateText}>
-              {searchTerm 
-                ? "Try adjusting your search terms" 
+              {searchTerm || tierFilter !== "all"
+                ? "Try adjusting your filters" 
                 : "Customers will appear here after their first order"}
             </p>
           </div>
@@ -471,6 +528,7 @@ export default function CustomerTiers() {
                 </div>
                 {customer.currentTier ? (
                   <div style={styles.tierBadge}>
+                    <span>{getTierIcon(customer.currentTier.cashbackPercent)}</span>
                     {customer.currentTier.name} • {customer.currentTier.cashbackPercent}% cashback
                   </div>
                 ) : (
@@ -531,7 +589,7 @@ export default function CustomerTiers() {
                     <option value="">Select tier...</option>
                     {tiers.map(tier => (
                       <option key={tier.id} value={tier.id}>
-                        {tier.name} ({tier.cashbackPercent}%)
+                        {getTierIcon(tier.cashbackPercent)} {tier.name} ({tier.cashbackPercent}%)
                       </option>
                     ))}
                   </select>
