@@ -4,7 +4,7 @@ import { useLoaderData, Link } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { TransactionStatus } from "@prisma/client";
-import { subDays, startOfMonth, endOfMonth, format } from "date-fns";
+import { subDays, startOfMonth, format } from "date-fns";
 
 interface DashboardMetrics {
   totalCustomers: number;
@@ -21,7 +21,6 @@ interface DashboardMetrics {
 interface TierDistribution {
   tierId: string;
   tierName: string;
-  level: number;
   memberCount: number;
   percentage: number;
   cashbackPercent: number;
@@ -188,7 +187,7 @@ async function getTierDistribution(shopDomain: string): Promise<TierDistribution
       shopDomain,
       isActive: true 
     },
-    orderBy: { level: 'asc' }
+    orderBy: { cashbackPercent: 'desc' } // Order by cashback percentage instead of level
   });
 
   const memberCounts = await prisma.customerMembership.groupBy({
@@ -207,7 +206,6 @@ async function getTierDistribution(shopDomain: string): Promise<TierDistribution
     return {
       tierId: tier.id,
       tierName: tier.name,
-      level: tier.level,
       memberCount: count,
       percentage: totalMembers > 0 ? Math.round((count / totalMembers) * 1000) / 10 : 0,
       cashbackPercent: tier.cashbackPercent
@@ -298,6 +296,14 @@ async function getTopCustomers(shopDomain: string, limit: number = 5) {
     .slice(0, limit);
 }
 
+// Helper function to get tier icon
+function getTierIcon(cashbackPercent: number) {
+  if (cashbackPercent >= 10) return "👑";
+  if (cashbackPercent >= 7) return "⭐";
+  if (cashbackPercent >= 5) return "✨";
+  return "";
+}
+
 export default function Dashboard() {
   const { metrics, tierDistribution, recentActivity, topCustomers } = useLoaderData<typeof loader>();
 
@@ -338,17 +344,16 @@ export default function Dashboard() {
       borderRadius: "12px",
       textAlign: "center" as const
     },
-    metricTitle: {
-      fontSize: "14px",
-      color: "#666",
-      margin: 0,
-      marginBottom: "8px"
-    },
     metricValue: {
       fontSize: "32px",
       fontWeight: "600",
       margin: "0 0 4px 0",
       color: "#1a1a1a"
+    },
+    metricTitle: {
+      fontSize: "14px",
+      color: "#666",
+      margin: 0
     },
     metricSubtext: {
       fontSize: "14px",
@@ -541,19 +546,19 @@ export default function Dashboard() {
         />
         <MetricCard
           title="Cashback This Month"
-          value={`${metrics.totalCashbackThisMonth.toFixed(2)}`}
-          subtitle={`${metrics.totalCashbackAllTime.toFixed(2)} all time`}
+          value={`$${metrics.totalCashbackThisMonth.toFixed(2)}`}
+          subtitle={`$${metrics.totalCashbackAllTime.toFixed(2)} all time`}
           styles={styles}
         />
         <MetricCard
           title="Active Store Credit"
-          value={`${metrics.activeStoreCredit.toFixed(2)}`}
+          value={`$${metrics.activeStoreCredit.toFixed(2)}`}
           subtitle="(Liability)"
           styles={styles}
         />
         <MetricCard
           title="Avg Order Value"
-          value={`${metrics.averageOrderValue.toFixed(2)}`}
+          value={`$${metrics.averageOrderValue.toFixed(2)}`}
           change={metrics.aovChange}
           styles={styles}
         />
@@ -605,7 +610,7 @@ export default function Dashboard() {
                       backgroundColor: getDefaultColor(index)
                     }} />
                     <span>
-                      {tier.tierName}: {tier.memberCount} ({tier.percentage}%)
+                      {getTierIcon(tier.cashbackPercent)} {tier.tierName}: {tier.memberCount} ({tier.percentage}%)
                     </span>
                   </div>
                 ))}
@@ -695,7 +700,7 @@ export default function Dashboard() {
                 </div>
                 {customer.currentTier && (
                   <div style={styles.tierBadge}>
-                    {customer.currentTier.name}
+                    {getTierIcon(customer.currentTier.cashbackPercent)} {customer.currentTier.name}
                   </div>
                 )}
               </div>
