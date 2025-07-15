@@ -70,7 +70,6 @@ model Tier {
   id                String              @id @default(uuid())
   shopDomain        String      
   name              String      
-  level             Int         
   minSpend          Float?      
   cashbackPercent   Float       
   evaluationPeriod  EvaluationPeriod    @default(ANNUAL)
@@ -79,9 +78,9 @@ model Tier {
   
   customerMemberships CustomerMembership[]
   
-  @@unique([shopDomain, level])
   @@unique([shopDomain, name])
   @@index([shopDomain])
+  @@index([cashbackPercent])
 }
 
 model CustomerMembership {
