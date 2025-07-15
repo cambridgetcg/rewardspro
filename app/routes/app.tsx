@@ -77,7 +77,7 @@ export default function App() {
         <Link to="/app/dashboard" prefetch="intent">
           Dashboard
         </Link>
-        <Link to="/app/store-credit" prefetch="intent">
+        <Link to="/app/customers/credit" prefetch="intent">
           Credits
         </Link>
         <Link to="/app/tiers" prefetch="intent">
