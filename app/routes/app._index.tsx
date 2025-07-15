@@ -150,24 +150,19 @@ export default function OnboardingFlow() {
   
   const styles = {
     container: {
-      maxWidth: "600px",
+      maxWidth: "1200px",
       margin: "0 auto",
-      padding: "40px 24px",
+      padding: "32px 24px",
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       color: "#1a1a1a",
       backgroundColor: "#ffffff",
       minHeight: "100vh"
     },
     header: {
-      textAlign: "center" as const,
-      marginBottom: "48px"
-    },
-    logo: {
-      fontSize: "48px",
-      marginBottom: "16px"
+      marginBottom: "40px"
     },
     title: {
-      fontSize: "28px",
+      fontSize: "32px",
       fontWeight: "600",
       margin: "0 0 8px 0",
       color: "#1a1a1a"
@@ -175,13 +170,16 @@ export default function OnboardingFlow() {
     subtitle: {
       fontSize: "16px",
       color: "#666",
-      margin: 0
+      margin: 0,
+      fontWeight: "400"
     },
     progressBar: {
       display: "flex",
-      justifyContent: "space-between",
-      marginBottom: "48px",
-      position: "relative" as const
+      justifyContent: "center",
+      marginBottom: "40px",
+      position: "relative" as const,
+      maxWidth: "400px",
+      margin: "0 auto 40px"
     },
     progressLine: {
       position: "absolute" as const,
@@ -226,14 +224,16 @@ export default function OnboardingFlow() {
       fontWeight: "500"
     },
     form: {
-      backgroundColor: "white",
+      backgroundColor: "#f8f9fa",
       padding: "32px",
       borderRadius: "12px",
       border: "1px solid #e0e0e0",
-      marginBottom: "24px"
+      marginBottom: "32px",
+      maxWidth: "800px",
+      margin: "0 auto 32px"
     },
     stepTitle: {
-      fontSize: "20px",
+      fontSize: "18px",
       fontWeight: "600",
       marginBottom: "24px",
       color: "#1a1a1a"
@@ -330,12 +330,12 @@ export default function OnboardingFlow() {
       alignItems: "center"
     },
     button: {
-      padding: "10px 24px",
+      padding: "10px 20px",
       borderRadius: "8px",
       fontSize: "14px",
       fontWeight: "500",
       cursor: "pointer",
-      transition: "all 0.2s",
+      transition: "opacity 0.2s",
       border: "none"
     },
     primaryButton: {
@@ -352,7 +352,8 @@ export default function OnboardingFlow() {
       textDecoration: "none",
       fontSize: "14px",
       textAlign: "center" as const,
-      display: "block"
+      display: "block",
+      marginTop: "24px"
     }
   };
   
@@ -360,8 +361,7 @@ export default function OnboardingFlow() {
     <div style={styles.container}>
       {/* Header */}
       <div style={styles.header}>
-        <div style={styles.logo}>🎯</div>
-        <h1 style={styles.title}>Welcome to Cashback Rewards!</h1>
+        <h1 style={styles.title}>Welcome to Cashback Rewards</h1>
         <p style={styles.subtitle}>Let's get your loyalty program set up in just 2 minutes</p>
       </div>
       
