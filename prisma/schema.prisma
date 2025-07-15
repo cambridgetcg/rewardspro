@@ -23,6 +23,7 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
+  onboardingCompleted Boolean @default(false)
   
   @@index([shop])
   @@index([expires])
@@ -97,6 +98,22 @@ model CustomerMembership {
   @@unique([customerId, isActive])
   @@index([customerId])
   @@index([tierId])
+}
+
+model Onboarding {
+  id                String      @id @default(uuid())
+  shopDomain        String      @unique
+  businessName      String
+  employeeCount     String
+  country           String
+  currency          String
+  contactEmail      String
+  productTypes      String[]    // Array of product types
+  goals             String[]    // Array of selected goals
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  @@index([shopDomain])
 }
 
 enum TransactionStatus {
