@@ -11,22 +11,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   
   // Check if onboarding is complete for this shop
-  const onboardingStatus = await prisma.session.findFirst({
+  const sessionData = await prisma.session.findFirst({
     where: { shop: session.shop },
     select: { 
       shop: true,
       email: true,
       accountOwner: true,
       locale: true,
-      // Add a field to track onboarding completion
-      // You'll need to add this to your Session model: onboardingCompleted Boolean @default(false)
+      onboardingCompleted: true
     }
   });
   
   // If onboarding is completed, redirect to dashboard
-  // if (onboardingStatus?.onboardingCompleted) {
-  //   return redirect("/app/dashboard");
-  // }
+  if (sessionData?.onboardingCompleted) {
+    return redirect("/app/dashboard");
+  }
+  
+  // Check if there's existing onboarding data (in case of incomplete submission)
+  const existingOnboarding = await prisma.onboarding.findUnique({
+    where: { shopDomain: session.shop }
+  });
   
   // Get shop details from Shopify
   const { admin } = await authenticate.admin(request);
@@ -56,8 +60,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ...shopData.data.shop,
       countryCode: shopData.data.shop.billingAddress?.countryCodeV2 || "US"
     },
-    sessionEmail: onboardingStatus?.email || shopData.data.shop.email,
-    locale: onboardingStatus?.locale
+    sessionEmail: sessionData?.email || shopData.data.shop.email,
+    locale: sessionData?.locale,
+    existingOnboarding
   });
 }
 
@@ -65,7 +70,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   
-  // Save onboarding data
+  // Collect all onboarding data
   const onboardingData = {
     businessName: formData.get("businessName") as string,
     employeeCount: formData.get("employeeCount") as string,
@@ -76,36 +81,93 @@ export async function action({ request }: ActionFunctionArgs) {
     goals: formData.getAll("goals") as string[],
   };
   
-  // Save to database (you'll need to create an Onboarding model)
-  // await prisma.onboarding.create({
-  //   data: {
-  //     shopDomain: session.shop,
-  //     ...onboardingData,
-  //   }
-  // });
+  // Validate required fields
+  if (!onboardingData.businessName || !onboardingData.employeeCount || 
+      !onboardingData.contactEmail || onboardingData.productTypes.length === 0) {
+    return json({ error: "Please fill in all required fields" }, { status: 400 });
+  }
   
-  // Mark onboarding as complete
-  // await prisma.session.update({
-  //   where: { shop: session.shop },
-  //   data: { onboardingCompleted: true }
-  // });
-  
-  // For now, just redirect to dashboard
-  return redirect("/app/dashboard");
+  try {
+    // Save or update onboarding data
+    await prisma.onboarding.upsert({
+      where: { shopDomain: session.shop },
+      update: onboardingData,
+      create: {
+        shopDomain: session.shop,
+        ...onboardingData
+      }
+    });
+    
+    // Mark onboarding as complete in the session
+    await prisma.session.updateMany({
+      where: { shop: session.shop },
+      data: { onboardingCompleted: true }
+    });
+    
+    // Create default tiers for the merchant if they don't exist
+    const existingTiers = await prisma.tier.count({
+      where: { shopDomain: session.shop }
+    });
+    
+    if (existingTiers === 0) {
+      // Create default tier structure
+      await prisma.tier.createMany({
+        data: [
+          {
+            shopDomain: session.shop,
+            name: "Bronze",
+            minSpend: null, // Base tier - no minimum
+            cashbackPercent: 3,
+            evaluationPeriod: "ANNUAL",
+            isActive: true
+          },
+          {
+            shopDomain: session.shop,
+            name: "Silver",
+            minSpend: 1000,
+            cashbackPercent: 5,
+            evaluationPeriod: "ANNUAL",
+            isActive: true
+          },
+          {
+            shopDomain: session.shop,
+            name: "Gold",
+            minSpend: 5000,
+            cashbackPercent: 7,
+            evaluationPeriod: "ANNUAL",
+            isActive: true
+          },
+          {
+            shopDomain: session.shop,
+            name: "Platinum",
+            minSpend: 10000,
+            cashbackPercent: 10,
+            evaluationPeriod: "ANNUAL",
+            isActive: true
+          }
+        ]
+      });
+    }
+    
+    return redirect("/app/dashboard");
+  } catch (error) {
+    console.error("Onboarding error:", error);
+    return json({ error: "Failed to save onboarding data. Please try again." }, { status: 500 });
+  }
 }
 
 export default function OnboardingFlow() {
-  const { shop, sessionEmail, locale } = useLoaderData<typeof loader>();
+  const { shop, sessionEmail, locale, existingOnboarding } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
-    businessName: shop.name || "",
-    employeeCount: "",
-    country: shop.countryCode || "",
-    currency: shop.currencyCode || "USD",
-    contactEmail: sessionEmail || "",
-    productTypes: [] as string[],
-    goals: [] as string[]
+    businessName: existingOnboarding?.businessName || shop.name || "",
+    employeeCount: existingOnboarding?.employeeCount || "",
+    country: existingOnboarding?.country || shop.countryCode || "",
+    currency: existingOnboarding?.currency || shop.currencyCode || "USD",
+    contactEmail: existingOnboarding?.contactEmail || sessionEmail || "",
+    productTypes: existingOnboarding?.productTypes || [] as string[],
+    goals: existingOnboarding?.goals || [] as string[]
   });
   
   const isSubmitting = navigation.state === "submitting";
@@ -347,13 +409,25 @@ export default function OnboardingFlow() {
       color: "#666",
       border: "1px solid #e0e0e0"
     },
-    skipLink: {
-      color: "#666",
-      textDecoration: "none",
+    infoBox: {
+      backgroundColor: "#e3f2fd",
+      border: "1px solid #90caf9",
+      borderRadius: "8px",
+      padding: "16px",
+      marginBottom: "24px",
       fontSize: "14px",
-      textAlign: "center" as const,
-      display: "block",
-      marginTop: "24px"
+      color: "#1565c0",
+      display: "flex",
+      alignItems: "center",
+      gap: "12px"
+    },
+    error: {
+      backgroundColor: "#ffebee",
+      color: "#c62828",
+      padding: "12px",
+      borderRadius: "8px",
+      marginBottom: "16px",
+      fontSize: "14px"
     }
   };
   
@@ -363,6 +437,16 @@ export default function OnboardingFlow() {
       <div style={styles.header}>
         <h1 style={styles.title}>Welcome to Cashback Rewards</h1>
         <p style={styles.subtitle}>Let's get your loyalty program set up in just 2 minutes</p>
+      </div>
+      
+      {/* Info Box */}
+      <div style={styles.infoBox}>
+        <span style={{ fontSize: "20px" }}>ℹ️</span>
+        <div>
+          <strong>Complete setup to get started</strong>
+          <br />
+          We'll create default reward tiers for you, which you can customize later.
+        </div>
       </div>
       
       {/* Progress Bar */}
@@ -557,7 +641,7 @@ export default function OnboardingFlow() {
               <label style={styles.label}>
                 What do you want to achieve with this rewards program?
               </label>
-              <p style={styles.helpText}>Select your main goals</p>
+              <p style={styles.helpText}>Select your main goals (optional)</p>
               <div>
                 {goalOptions.map((goal) => (
                   <div
@@ -596,6 +680,13 @@ export default function OnboardingFlow() {
                 ))}
               </div>
             </div>
+            
+            {/* Error message if no product types selected */}
+            {formData.productTypes.length === 0 && (
+              <div style={styles.error}>
+                Please select at least one product type to continue
+              </div>
+            )}
             
             {/* Hidden inputs to preserve step 1 data */}
             <input type="hidden" name="businessName" value={formData.businessName} />
@@ -637,21 +728,12 @@ export default function OnboardingFlow() {
                   }
                 }}
               >
-                {isSubmitting ? "Setting up..." : "Finish Setup & Go to Dashboard"}
+                {isSubmitting ? "Setting up..." : "Complete Setup"}
               </button>
             </div>
           </div>
         )}
       </Form>
-      
-      <a
-        href="/app/dashboard"
-        style={styles.skipLink}
-        onMouseOver={(e) => e.currentTarget.style.color = '#1a1a1a'}
-        onMouseOut={(e) => e.currentTarget.style.color = '#666'}
-      >
-        Skip for now
-      </a>
     </div>
   );
 }
