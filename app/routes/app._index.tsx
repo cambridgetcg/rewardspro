@@ -736,93 +736,92 @@ export default function OnboardingFlow() {
             <p style={styles.subtitle}>This helps us customize your rewards program</p>
           </div>
           
-          <Form method="post" action={formActionUrl}>
-            <div style={styles.form}>
+          <div style={styles.form}>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>
+                Business Name <span style={styles.required}>*</span>
+              </label>
+              <input
+                type="text"
+                name="businessName"
+                value={formData.businessName}
+                onChange={(e) => setFormData({...formData, businessName: e.target.value})}
+                style={styles.input}
+                placeholder="Your Store Name"
+                required
+              />
+            </div>
+            
+            <div style={styles.formGroup}>
+              <label style={styles.label}>
+                Number of Employees <span style={styles.required}>*</span>
+              </label>
+              <select
+                name="employeeCount"
+                value={formData.employeeCount}
+                onChange={(e) => setFormData({...formData, employeeCount: e.target.value})}
+                style={styles.select}
+                required
+              >
+                <option value="">Select team size</option>
+                <option value="1">Just me</option>
+                <option value="2-5">2-5 employees</option>
+                <option value="6-10">6-10 employees</option>
+                <option value="11-50">11-50 employees</option>
+                <option value="50+">50+ employees</option>
+              </select>
+            </div>
+            
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
               <div style={styles.formGroup}>
-                <label style={styles.label}>
-                  Business Name <span style={styles.required}>*</span>
-                </label>
+                <label style={styles.label}>Country</label>
                 <input
                   type="text"
-                  name="businessName"
-                  value={formData.businessName}
-                  onChange={(e) => setFormData({...formData, businessName: e.target.value})}
+                  name="country"
+                  value={formData.country}
+                  onChange={(e) => setFormData({...formData, country: e.target.value})}
                   style={styles.input}
-                  placeholder="Your Store Name"
-                  required
+                  placeholder="United States"
                 />
               </div>
               
               <div style={styles.formGroup}>
-                <label style={styles.label}>
-                  Number of Employees <span style={styles.required}>*</span>
-                </label>
+                <label style={styles.label}>Currency</label>
                 <select
-                  name="employeeCount"
-                  value={formData.employeeCount}
-                  onChange={(e) => setFormData({...formData, employeeCount: e.target.value})}
+                  name="currency"
+                  value={formData.currency}
+                  onChange={(e) => setFormData({...formData, currency: e.target.value})}
                   style={styles.select}
-                  required
                 >
-                  <option value="">Select team size</option>
-                  <option value="1">Just me</option>
-                  <option value="2-5">2-5 employees</option>
-                  <option value="6-10">6-10 employees</option>
-                  <option value="11-50">11-50 employees</option>
-                  <option value="50+">50+ employees</option>
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="CAD">CAD ($)</option>
+                  <option value="AUD">AUD ($)</option>
                 </select>
               </div>
-              
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Country</label>
-                  <input
-                    type="text"
-                    name="country"
-                    value={formData.country}
-                    onChange={(e) => setFormData({...formData, country: e.target.value})}
-                    style={styles.input}
-                    placeholder="United States"
-                  />
-                </div>
-                
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Currency</label>
-                  <select
-                    name="currency"
-                    value={formData.currency}
-                    onChange={(e) => setFormData({...formData, currency: e.target.value})}
-                    style={styles.select}
-                  >
-                    <option value="USD">USD ($)</option>
-                    <option value="EUR">EUR (€)</option>
-                    <option value="GBP">GBP (£)</option>
-                    <option value="CAD">CAD ($)</option>
-                    <option value="AUD">AUD ($)</option>
-                  </select>
-                </div>
-              </div>
-              
-              <div style={styles.formGroup}>
-                <label style={styles.label}>
-                  Main Contact Email <span style={styles.required}>*</span>
-                </label>
-                <input
-                  type="email"
-                  name="contactEmail"
-                  value={formData.contactEmail}
-                  onChange={(e) => setFormData({...formData, contactEmail: e.target.value})}
-                  style={styles.input}
-                  placeholder="you@example.com"
-                  required
-                />
-                <p style={styles.helpText}>We'll use this for important updates about your rewards program</p>
-              </div>
             </div>
-          </Form>
+            
+            <div style={styles.formGroup}>
+              <label style={styles.label}>
+                Main Contact Email <span style={styles.required}>*</span>
+              </label>
+              <input
+                type="email"
+                name="contactEmail"
+                value={formData.contactEmail}
+                onChange={(e) => setFormData({...formData, contactEmail: e.target.value})}
+                style={styles.input}
+                placeholder="you@example.com"
+                required
+              />
+              <p style={styles.helpText}>We'll use this for important updates about your rewards program</p>
+            </div>
+          </div>
           
           <div style={styles.actions}>
             <button
+              type="button"
               onClick={handleBack}
               style={{
                 ...styles.button,
@@ -834,6 +833,7 @@ export default function OnboardingFlow() {
               Back
             </button>
             <button
+              type="button"
               onClick={handleNext}
               style={{
                 ...styles.button,
