@@ -40,6 +40,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const customerId = formData.get("customerId") as string;
   const amount = parseFloat(formData.get("amount") as string);
   const currency = formData.get("currency") as string || "USD";
+  const actionType = formData.get("actionType") as string; // "add" or "remove"
   
   if (!customerId || !amount || isNaN(amount)) {
     return json({ 
@@ -61,31 +62,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
     
-    // Issue store credit via GraphQL
-    const response = await admin.graphql(
-      `#graphql
-      mutation storeCreditAccountCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
-        storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
-          storeCreditAccountTransaction {
-            id
-            amount {
-              amount
-              currencyCode
+    // Check if removing more than available credit
+    if (actionType === "remove" && amount > customer.storeCredit) {
+      return json({ 
+        success: false, 
+        error: `Cannot remove $${amount.toFixed(2)}. Customer only has $${customer.storeCredit.toFixed(2)} available.` 
+      });
+    }
+    
+    // Determine the GraphQL mutation based on action type
+    const mutation = actionType === "add" 
+      ? `#graphql
+        mutation storeCreditAccountCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
+          storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
+            storeCreditAccountTransaction {
+              id
+              amount {
+                amount
+                currencyCode
+              }
+              balanceAfterTransaction {
+                amount
+                currencyCode
+              }
             }
-            balanceAfterTransaction {
-              amount
-              currencyCode
+            userErrors {
+              field
+              message
+              code
             }
           }
-          userErrors {
-            field
-            message
-            code
+        }`
+      : `#graphql
+        mutation storeCreditAccountDebit($id: ID!, $debitInput: StoreCreditAccountDebitInput!) {
+          storeCreditAccountDebit(id: $id, debitInput: $debitInput) {
+            storeCreditAccountTransaction {
+              id
+              amount {
+                amount
+                currencyCode
+              }
+              balanceAfterTransaction {
+                amount
+                currencyCode
+              }
+            }
+            userErrors {
+              field
+              message
+              code
+            }
           }
-        }
-      }`,
-      {
-        variables: {
+        }`;
+    
+    const variables = actionType === "add"
+      ? {
           id: `gid://shopify/Customer/${customer.shopifyCustomerId}`,
           creditInput: {
             creditAmount: {
@@ -94,44 +125,58 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             }
           }
         }
-      }
-    );
+      : {
+          id: `gid://shopify/Customer/${customer.shopifyCustomerId}`,
+          debitInput: {
+            debitAmount: {
+              amount: amount.toFixed(2),
+              currencyCode: currency
+            }
+          }
+        };
     
+    const response = await admin.graphql(mutation, { variables });
     const result = await response.json();
     
-    if (result.data?.storeCreditAccountCredit?.userErrors?.length > 0) {
-      const errors = result.data.storeCreditAccountCredit.userErrors;
+    const mutationResult = actionType === "add" 
+      ? result.data?.storeCreditAccountCredit
+      : result.data?.storeCreditAccountDebit;
+    
+    if (mutationResult?.userErrors?.length > 0) {
+      const errors = mutationResult.userErrors;
       return json({ 
         success: false, 
         error: errors.map((e: any) => e.message).join(", ")
       });
     }
     
-    if (result.data?.storeCreditAccountCredit?.storeCreditAccountTransaction) {
+    if (mutationResult?.storeCreditAccountTransaction) {
       // Update local database
+      const updateAmount = actionType === "add" ? amount : -amount;
       await prisma.customer.update({
         where: { id: customerId },
         data: {
-          storeCredit: { increment: amount }
+          storeCredit: { increment: updateAmount }
         }
       });
       
+      const actionWord = actionType === "add" ? "added" : "removed";
       return json({ 
         success: true,
-        message: `Successfully issued ${currency} ${amount.toFixed(2)} store credit to ${customer.email}`
+        message: `Successfully ${actionWord} ${currency} ${amount.toFixed(2)} ${actionType === "add" ? "to" : "from"} ${customer.email}`
       });
     }
     
     return json({ 
       success: false, 
-      error: "Failed to issue store credit"
+      error: `Failed to ${actionType} store credit`
     });
     
   } catch (error) {
     console.error("Store credit error:", error);
     return json({ 
       success: false, 
-      error: error instanceof Error ? error.message : "Failed to issue store credit"
+      error: error instanceof Error ? error.message : `Failed to ${actionType} store credit`
     });
   }
 };
@@ -146,8 +191,9 @@ export default function StoreCredit() {
   const navigation = useNavigation();
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [showIssueForm, setShowIssueForm] = useState(false);
+  const [showForm, setShowForm] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [formActionType, setFormActionType] = useState<"add" | "remove">("add");
   const isSubmitting = navigation.state === "submitting";
 
   // Show notifications from action data
@@ -155,7 +201,7 @@ export default function StoreCredit() {
     if (actionData) {
       if (actionData.success && "message" in actionData) {
         setNotification({ type: 'success', message: actionData.message });
-        setShowIssueForm(false);
+        setShowForm(false);
         setSelectedCustomerId("");
         setTimeout(() => setNotification(null), 5000);
       } else if (!actionData.success && "error" in actionData) {
@@ -170,6 +216,8 @@ export default function StoreCredit() {
     customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     customer.shopifyCustomerId.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
 
   const styles = {
     container: {
@@ -233,17 +281,6 @@ export default function StoreCredit() {
       margin: 0,
       color: "#1a1a1a"
     },
-    actionButton: {
-      padding: "10px 20px",
-      backgroundColor: "#1a1a1a",
-      color: "white",
-      border: "none",
-      borderRadius: "8px",
-      cursor: "pointer",
-      fontSize: "14px",
-      fontWeight: "500",
-      transition: "opacity 0.2s"
-    },
     searchInput: {
       padding: "10px 14px",
       border: "1px solid #e0e0e0",
@@ -305,9 +342,20 @@ export default function StoreCredit() {
       alignItems: "center",
       flexWrap: "wrap" as const
     },
-    primaryButton: {
+    addButton: {
       padding: "8px 16px",
       backgroundColor: "#10B981",
+      color: "white",
+      border: "none",
+      borderRadius: "6px",
+      cursor: "pointer",
+      fontSize: "14px",
+      fontWeight: "500",
+      transition: "opacity 0.2s"
+    },
+    removeButton: {
+      padding: "8px 16px",
+      backgroundColor: "#EF4444",
       color: "white",
       border: "none",
       borderRadius: "6px",
@@ -352,7 +400,7 @@ export default function StoreCredit() {
       color: "#666",
       marginBottom: "24px"
     },
-    issueForm: {
+    creditForm: {
       backgroundColor: "#f8f9fa",
       padding: "24px",
       marginBottom: "24px",
@@ -363,12 +411,17 @@ export default function StoreCredit() {
       fontSize: "18px",
       fontWeight: "600",
       marginTop: 0,
-      marginBottom: "20px",
+      marginBottom: "8px",
       color: "#1a1a1a"
+    },
+    formSubtitle: {
+      fontSize: "14px",
+      color: "#666",
+      marginBottom: "20px"
     },
     formGrid: {
       display: "grid",
-      gridTemplateColumns: "1fr 150px 100px",
+      gridTemplateColumns: "1fr 150px",
       gap: "16px",
       alignItems: "flex-end",
       marginBottom: "16px"
@@ -417,6 +470,14 @@ export default function StoreCredit() {
       fontSize: "14px",
       fontWeight: "500",
       transition: "opacity 0.2s"
+    },
+    warningText: {
+      fontSize: "14px",
+      color: "#e65100",
+      backgroundColor: "#fff3e0",
+      padding: "12px",
+      borderRadius: "6px",
+      marginBottom: "16px"
     }
   };
 
@@ -425,7 +486,7 @@ export default function StoreCredit() {
       {/* Header */}
       <div style={styles.header}>
         <h1 style={styles.title}>Store Credit Management</h1>
-        <p style={styles.subtitle}>Issue and manage store credit for customers</p>
+        <p style={styles.subtitle}>Add or remove store credit for customers</p>
       </div>
 
       {/* Notification */}
@@ -474,13 +535,24 @@ export default function StoreCredit() {
         />
       </div>
 
-      {/* Issue Form */}
-      {showIssueForm && selectedCustomerId && (
-        <Form method="post" style={styles.issueForm}>
+      {/* Credit Form */}
+      {showForm && selectedCustomerId && selectedCustomer && (
+        <Form method="post" style={styles.creditForm}>
           <h3 style={styles.formTitle}>
-            Issue Store Credit to {customers.find(c => c.id === selectedCustomerId)?.email}
+            {formActionType === "add" ? "Add" : "Remove"} Store Credit
           </h3>
+          <p style={styles.formSubtitle}>
+            {selectedCustomer.email} • Current balance: ${selectedCustomer.storeCredit.toFixed(2)}
+          </p>
+          
+          {formActionType === "remove" && selectedCustomer.storeCredit === 0 && (
+            <div style={styles.warningText}>
+              ⚠️ This customer has no store credit to remove.
+            </div>
+          )}
+          
           <input type="hidden" name="customerId" value={selectedCustomerId} />
+          <input type="hidden" name="actionType" value={formActionType} />
           
           <div style={styles.formGrid}>
             <div style={styles.formGroup}>
@@ -490,8 +562,9 @@ export default function StoreCredit() {
                 name="amount"
                 step="0.01"
                 min="0.01"
+                max={formActionType === "remove" ? selectedCustomer.storeCredit : undefined}
                 required
-                placeholder="10.00"
+                placeholder={formActionType === "remove" ? `Max: ${selectedCustomer.storeCredit.toFixed(2)}` : "10.00"}
                 style={styles.input}
                 onFocus={(e) => e.currentTarget.style.borderColor = '#1a1a1a'}
                 onBlur={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
@@ -518,19 +591,20 @@ export default function StoreCredit() {
           <div style={styles.formActions}>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || (formActionType === "remove" && selectedCustomer.storeCredit === 0)}
               style={{
                 ...styles.saveButton,
-                opacity: isSubmitting ? 0.6 : 1,
-                cursor: isSubmitting ? "not-allowed" : "pointer"
+                backgroundColor: formActionType === "add" ? "#10B981" : "#EF4444",
+                opacity: (isSubmitting || (formActionType === "remove" && selectedCustomer.storeCredit === 0)) ? 0.6 : 1,
+                cursor: (isSubmitting || (formActionType === "remove" && selectedCustomer.storeCredit === 0)) ? "not-allowed" : "pointer"
               }}
             >
-              {isSubmitting ? "Issuing..." : "Issue Credit"}
+              {isSubmitting ? "Processing..." : `${formActionType === "add" ? "Add" : "Remove"} Credit`}
             </button>
             <button
               type="button"
               onClick={() => {
-                setShowIssueForm(false);
+                setShowForm(false);
                 setSelectedCustomerId("");
               }}
               style={styles.cancelButton}
@@ -591,13 +665,35 @@ export default function StoreCredit() {
                 <button
                   onClick={() => {
                     setSelectedCustomerId(customer.id);
-                    setShowIssueForm(true);
+                    setFormActionType("add");
+                    setShowForm(true);
                   }}
-                  style={styles.primaryButton}
+                  style={styles.addButton}
                   onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
                   onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
                 >
-                  Issue Store Credit
+                  + Add Credit
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedCustomerId(customer.id);
+                    setFormActionType("remove");
+                    setShowForm(true);
+                  }}
+                  style={styles.removeButton}
+                  disabled={customer.storeCredit === 0}
+                  onMouseOver={(e) => {
+                    if (customer.storeCredit > 0) {
+                      e.currentTarget.style.opacity = '0.8';
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (customer.storeCredit > 0) {
+                      e.currentTarget.style.opacity = '1';
+                    }
+                  }}
+                >
+                  − Remove Credit
                 </button>
               </div>
             </div>
