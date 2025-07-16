@@ -1,128 +1,116 @@
 // app/routes/app._index.tsx
-// This is the main entry point after app installation
 import { json, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Form, useNavigation } from "@remix-run/react";
+import { useLoaderData, Form, useNavigation, useActionData, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 // Check if onboarding is complete
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session, admin } = await authenticate.admin(request);
-  
-  // Get URL parameters to preserve in redirects
-  const url = new URL(request.url);
-  const shop = url.searchParams.get("shop") || session.shop;
-  const host = url.searchParams.get("host");
-  
-  console.log("App index loader - URL:", url.toString());
-  console.log("App index loader - Shop:", shop);
-  
-  // Check if onboarding is complete for this shop
-  const sessionData = await prisma.session.findFirst({
-    where: { shop: session.shop },
-    select: { 
-      shop: true,
-      email: true,
-      accountOwner: true,
-      locale: true,
-      onboardingCompleted: true
-    }
-  });
-  
-  console.log("App index loader - Session data:", sessionData);
-  console.log("App index loader - Onboarding completed:", sessionData?.onboardingCompleted);
-  
-  // Handle null or undefined onboardingCompleted
-  const isOnboardingCompleted = sessionData?.onboardingCompleted === true;
-  
-  // If onboarding is completed, redirect to dashboard with context preserved
-  if (isOnboardingCompleted) {
-    const redirectUrl = new URL("/app/dashboard", url.origin);
-    redirectUrl.searchParams.set("shop", shop);
-    if (host) redirectUrl.searchParams.set("host", host);
+  try {
+    const { session, admin } = await authenticate.admin(request);
+    const url = new URL(request.url);
+    const shop = url.searchParams.get("shop") || session.shop;
+    const host = url.searchParams.get("host");
     
-    console.log("App index loader - Redirecting to dashboard:", redirectUrl.toString());
-    return redirect(redirectUrl.toString());
-  }
-  
-  // If onboarding is not complete, show onboarding flow
-  console.log("App index loader - Showing onboarding flow");
-  
-  // Check if there's existing onboarding data (in case of incomplete submission)
-  const existingOnboarding = await prisma.onboarding.findUnique({
-    where: { shopDomain: session.shop }
-  });
-  
-  // Get shop details from Shopify
-  const response = await admin.graphql(
-    `#graphql
-    query shopDetails {
-      shop {
-        name
-        email
-        currencyCode
-        primaryDomain {
-          url
-        }
-        # Get country from address
-        billingAddress {
-          country
-          countryCodeV2
-        }
+    // Check if onboarding is complete
+    const sessionData = await prisma.session.findFirst({
+      where: { shop: session.shop },
+      select: {
+        shop: true,
+        email: true,
+        accountOwner: true,
+        locale: true,
+        onboardingCompleted: true
       }
-    }`
-  );
-  
-  const shopData = await response.json();
-  
-  if (!shopData?.data?.shop) {
-    console.error("App index loader - Failed to fetch shop data");
-    throw new Response("Failed to load shop information", { status: 500 });
+    });
+    
+    // If onboarding is complete, redirect to dashboard
+    if (sessionData?.onboardingCompleted) {
+      const redirectUrl = new URL("/app/dashboard", request.url);
+      redirectUrl.searchParams.set("shop", shop);
+      if (host) redirectUrl.searchParams.set("host", host);
+      return redirect(redirectUrl.toString());
+    }
+    
+    // Get existing onboarding data if any
+    const existingOnboarding = await prisma.onboarding.findUnique({
+      where: { shopDomain: session.shop }
+    });
+    
+    // Get shop details from Shopify
+    const response = await admin.graphql(
+      `#graphql
+      query shopDetails {
+        shop {
+          name
+          email
+          currencyCode
+          primaryDomain {
+            url
+          }
+          billingAddress {
+            country
+            countryCodeV2
+          }
+        }
+      }`
+    );
+    
+    const shopData = await response.json();
+    
+    if (!shopData?.data?.shop) {
+      throw new Error("Failed to load shop information");
+    }
+    
+    return json({
+      shop: {
+        ...shopData.data.shop,
+        domain: session.shop,
+        countryCode: shopData.data.shop.billingAddress?.countryCodeV2 || "US"
+      },
+      sessionEmail: sessionData?.email || shopData.data.shop.email,
+      locale: sessionData?.locale,
+      existingOnboarding,
+      urlParams: { shop, host }
+    });
+  } catch (error) {
+    console.error("Loader error:", error);
+    throw error;
   }
-  
-  return json({
-    shop: {
-      ...shopData.data.shop,
-      countryCode: shopData.data.shop.billingAddress?.countryCodeV2 || "US"
-    },
-    sessionEmail: sessionData?.email || shopData.data.shop.email,
-    locale: sessionData?.locale,
-    existingOnboarding,
-    urlParams: { shop, host } // Pass URL params to component
-  });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
-  const formData = await request.formData();
-  
-  // Preserve URL parameters for redirect
-  const url = new URL(request.url);
-  const shop = url.searchParams.get("shop") || session.shop;
-  const host = url.searchParams.get("host");
-  
-  console.log("App index action - Processing form submission");
-  
-  // Collect all onboarding data
-  const onboardingData = {
-    businessName: formData.get("businessName") as string,
-    employeeCount: formData.get("employeeCount") as string,
-    country: formData.get("country") as string,
-    currency: formData.get("currency") as string,
-    contactEmail: formData.get("contactEmail") as string,
-    productTypes: formData.getAll("productTypes") as string[],
-    goals: formData.getAll("goals") as string[],
-  };
-  
-  // Validate required fields
-  if (!onboardingData.businessName || !onboardingData.employeeCount || 
-      !onboardingData.contactEmail || onboardingData.productTypes.length === 0) {
-    return json({ error: "Please fill in all required fields" }, { status: 400 });
-  }
-  
   try {
-    // Save or update onboarding data
+    const { session } = await authenticate.admin(request);
+    const formData = await request.formData();
+    const url = new URL(request.url);
+    const shop = url.searchParams.get("shop") || session.shop;
+    const host = url.searchParams.get("host");
+    
+    // Collect all onboarding data
+    const onboardingData = {
+      businessName: formData.get("businessName") as string,
+      employeeCount: formData.get("employeeCount") as string,
+      country: formData.get("country") as string,
+      currency: formData.get("currency") as string,
+      contactEmail: formData.get("contactEmail") as string,
+      productTypes: formData.getAll("productTypes") as string[],
+      goals: formData.getAll("goals") as string[],
+    };
+    
+    // Validate required fields
+    const errors: Record<string, string> = {};
+    if (!onboardingData.businessName) errors.businessName = "Business name is required";
+    if (!onboardingData.employeeCount) errors.employeeCount = "Please select your team size";
+    if (!onboardingData.contactEmail) errors.contactEmail = "Contact email is required";
+    if (onboardingData.productTypes.length === 0) errors.productTypes = "Please select at least one product type";
+    
+    if (Object.keys(errors).length > 0) {
+      return json({ success: false, errors }, { status: 400 });
+    }
+    
+    // Save onboarding data
     await prisma.onboarding.upsert({
       where: { shopDomain: session.shop },
       update: onboardingData,
@@ -132,29 +120,24 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     });
     
-    console.log("App index action - Onboarding data saved");
-    
-    // Mark onboarding as complete in the session
+    // Mark onboarding as complete
     await prisma.session.updateMany({
       where: { shop: session.shop },
       data: { onboardingCompleted: true }
     });
     
-    console.log("App index action - Session updated");
-    
-    // Create default tiers for the merchant if they don't exist
+    // Create default tiers if they don't exist
     const existingTiers = await prisma.tier.count({
       where: { shopDomain: session.shop }
     });
     
     if (existingTiers === 0) {
-      // Create default tier structure
       await prisma.tier.createMany({
         data: [
           {
             shopDomain: session.shop,
             name: "Bronze",
-            minSpend: null, // Base tier - no minimum
+            minSpend: null,
             cashbackPercent: 3,
             evaluationPeriod: "ANNUAL",
             isActive: true
@@ -185,111 +168,190 @@ export async function action({ request }: ActionFunctionArgs) {
           }
         ]
       });
-      
-      console.log("App index action - Default tiers created");
     }
     
-    // Build redirect URL with preserved context
-    const redirectUrl = new URL("/app/dashboard", url.origin);
+    // Redirect to dashboard
+    const redirectUrl = new URL("/app/dashboard", request.url);
     redirectUrl.searchParams.set("shop", shop);
     if (host) redirectUrl.searchParams.set("host", host);
     
-    console.log("App index action - Redirecting to:", redirectUrl.toString());
     return redirect(redirectUrl.toString());
-    
   } catch (error) {
-    console.error("Onboarding error:", error);
-    return json({ error: "Failed to save onboarding data. Please try again." }, { status: 500 });
+    console.error("Action error:", error);
+    return json({
+      success: false,
+      errors: { general: "Failed to save onboarding data. Please try again." }
+    }, { status: 500 });
   }
 }
 
+// Product type options
+const productTypeOptions = [
+  { value: "fashion", label: "Fashion & Apparel", icon: "👔" },
+  { value: "electronics", label: "Electronics & Tech", icon: "💻" },
+  { value: "home", label: "Home & Garden", icon: "🏠" },
+  { value: "beauty", label: "Beauty & Personal Care", icon: "💄" },
+  { value: "food", label: "Food & Beverage", icon: "🍽️" },
+  { value: "sports", label: "Sports & Outdoors", icon: "⚽" },
+  { value: "books", label: "Books & Media", icon: "📚" },
+  { value: "toys", label: "Toys & Games", icon: "🎮" },
+  { value: "health", label: "Health & Wellness", icon: "💊" },
+  { value: "automotive", label: "Automotive", icon: "🚗" },
+  { value: "other", label: "Other", icon: "📦" }
+];
+
+// Goal options
+const goalOptions = [
+  { value: "retention", label: "Improve customer retention", icon: "🎯", description: "Keep customers coming back" },
+  { value: "loyalty", label: "Build brand loyalty", icon: "⭐", description: "Create lasting relationships" },
+  { value: "revenue", label: "Increase revenue", icon: "💰", description: "Boost average order value" },
+  { value: "engagement", label: "Better engagement", icon: "🤝", description: "Connect with customers" },
+  { value: "acquisition", label: "Attract new customers", icon: "🚀", description: "Grow your customer base" },
+  { value: "analytics", label: "Understand customers better", icon: "📊", description: "Data-driven insights" }
+];
+
 export default function OnboardingFlow() {
   const data = useLoaderData<typeof loader>();
-  
-  // Safely destructure with defaults
-  const { shop, sessionEmail, locale, existingOnboarding, urlParams } = data || {};
-  
+  const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
-  const [currentStep, setCurrentStep] = useState(1);
+  const [searchParams] = useSearchParams();
+  const isSubmitting = navigation.state === "submitting";
+  
+  const { shop, sessionEmail, existingOnboarding, urlParams } = data;
+  
+  // Form state
   const [formData, setFormData] = useState({
     businessName: existingOnboarding?.businessName || shop?.name || "",
     employeeCount: existingOnboarding?.employeeCount || "",
-    country: existingOnboarding?.country || shop?.countryCode || "",
+    country: existingOnboarding?.country || shop?.countryCode || "US",
     currency: existingOnboarding?.currency || shop?.currencyCode || "USD",
     contactEmail: existingOnboarding?.contactEmail || sessionEmail || "",
     productTypes: existingOnboarding?.productTypes || [] as string[],
     goals: existingOnboarding?.goals || [] as string[]
   });
   
-  const isSubmitting = navigation.state === "submitting";
+  // UI state
+  const [currentStep, setCurrentStep] = useState(1);
+  const totalSteps = 3;
   
-  const productTypeOptions = [
-    "Fashion & Apparel",
-    "Electronics & Tech",
-    "Home & Garden",
-    "Beauty & Personal Care",
-    "Food & Beverage",
-    "Sports & Outdoors",
-    "Books & Media",
-    "Toys & Games",
-    "Health & Wellness",
-    "Automotive",
-    "Other"
-  ];
+  // Validation errors
+  const errors = actionData?.errors || {};
   
-  const goalOptions = [
-    { value: "retention", label: "Improve customer retention", icon: "🎯" },
-    { value: "loyalty", label: "Build loyalty program", icon: "⭐" },
-    { value: "email", label: "Email marketing automation", icon: "📧" },
-    { value: "analytics", label: "Better customer analytics", icon: "📊" },
-    { value: "rewards", label: "Manage rewards & cashback", icon: "💰" },
-    { value: "segmentation", label: "Customer segmentation", icon: "👥" }
-  ];
+  // Step navigation
+  const canProceedStep1 = formData.businessName && formData.employeeCount && formData.contactEmail;
+  const canProceedStep2 = formData.productTypes.length > 0;
   
   const handleNext = () => {
-    if (currentStep === 4) {
-      // Validate step 4 (business info)
-      if (!formData.businessName || !formData.employeeCount || !formData.contactEmail) {
-        alert("Please fill in all required fields");
-        return;
-      }
+    if (currentStep === 1 && !canProceedStep1) {
+      alert("Please fill in all required fields");
+      return;
     }
-    setCurrentStep(currentStep + 1);
+    if (currentStep === 2 && !canProceedStep2) {
+      alert("Please select at least one product type");
+      return;
+    }
+    setCurrentStep(Math.min(currentStep + 1, totalSteps));
   };
   
   const handleBack = () => {
-    setCurrentStep(currentStep - 1);
+    setCurrentStep(Math.max(currentStep - 1, 1));
   };
   
-  // Ensure we have data before rendering
-  if (!shop) {
-    return (
-      <div style={{ padding: "40px", textAlign: "center" }}>
-        <h2>Loading...</h2>
-        <p>Please wait while we load your shop information.</p>
-      </div>
-    );
-  }
+  // Toggle helpers
+  const toggleProductType = (type: string) => {
+    setFormData(prev => ({
+      ...prev,
+      productTypes: prev.productTypes.includes(type)
+        ? prev.productTypes.filter(t => t !== type)
+        : [...prev.productTypes, type]
+    }));
+  };
+  
+  const toggleGoal = (goal: string) => {
+    setFormData(prev => ({
+      ...prev,
+      goals: prev.goals.includes(goal)
+        ? prev.goals.filter(g => g !== goal)
+        : [...prev.goals, goal]
+    }));
+  };
   
   const styles = {
     container: {
-      maxWidth: "800px",
+      maxWidth: "900px",
       margin: "0 auto",
-      padding: "60px 24px",
+      padding: "40px 24px",
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       color: "#1a1a1a",
       backgroundColor: "#ffffff",
-      minHeight: "100vh",
+      minHeight: "100vh"
+    },
+    progressBar: {
+      marginBottom: "48px"
+    },
+    progressSteps: {
+      display: "flex",
+      justifyContent: "space-between",
+      position: "relative" as const,
+      marginBottom: "8px"
+    },
+    progressLine: {
+      position: "absolute" as const,
+      top: "16px",
+      left: "0",
+      right: "0",
+      height: "2px",
+      backgroundColor: "#e0e0e0",
+      zIndex: 0
+    },
+    progressLineFill: {
+      position: "absolute" as const,
+      top: "16px",
+      left: "0",
+      height: "2px",
+      backgroundColor: "#10B981",
+      transition: "width 0.3s ease",
+      zIndex: 1
+    },
+    progressStep: {
       display: "flex",
       flexDirection: "column" as const,
-      justifyContent: "center"
+      alignItems: "center",
+      position: "relative" as const,
+      zIndex: 2,
+      backgroundColor: "white",
+      padding: "0 8px"
+    },
+    progressDot: {
+      width: "32px",
+      height: "32px",
+      borderRadius: "50%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: "14px",
+      fontWeight: "600",
+      transition: "all 0.3s ease"
+    },
+    progressDotActive: {
+      backgroundColor: "#10B981",
+      color: "white"
+    },
+    progressDotInactive: {
+      backgroundColor: "#e0e0e0",
+      color: "#999"
+    },
+    progressLabel: {
+      fontSize: "12px",
+      marginTop: "8px",
+      color: "#666"
     },
     header: {
       textAlign: "center" as const,
       marginBottom: "48px"
     },
     title: {
-      fontSize: "40px",
+      fontSize: "36px",
       fontWeight: "700",
       margin: "0 0 16px 0",
       color: "#1a1a1a",
@@ -302,78 +364,16 @@ export default function OnboardingFlow() {
       fontWeight: "400",
       lineHeight: "1.5"
     },
-    contentSection: {
-      textAlign: "center" as const,
-      marginBottom: "60px"
-    },
-    featureList: {
-      maxWidth: "600px",
-      margin: "0 auto",
-      textAlign: "left" as const
-    },
-    featureItem: {
-      display: "flex",
-      alignItems: "flex-start",
-      marginBottom: "32px",
-      gap: "20px"
-    },
-    featureIcon: {
-      fontSize: "40px",
-      flexShrink: 0
-    },
-    featureText: {
-      flex: 1
-    },
-    featureTitle: {
-      fontSize: "20px",
-      fontWeight: "600",
-      marginBottom: "8px",
-      color: "#1a1a1a"
-    },
-    featureDescription: {
-      fontSize: "16px",
-      color: "#666",
-      lineHeight: "1.5"
-    },
-    launcherDemo: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "32px",
-      margin: "48px 0"
-    },
-    launcherText: {
-      fontSize: "24px",
-      fontWeight: "600",
-      color: "#1a1a1a"
-    },
-    launcherButton: {
-      width: "80px",
-      height: "80px",
-      backgroundColor: "#5B5FCF",
-      borderRadius: "20px",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: "40px",
-      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-      cursor: "pointer",
-      transition: "transform 0.2s"
-    },
     form: {
+      maxWidth: "600px",
+      margin: "0 auto"
+    },
+    formSection: {
       backgroundColor: "#f8f9fa",
       padding: "32px",
       borderRadius: "12px",
       border: "1px solid #e0e0e0",
-      marginBottom: "32px",
-      maxWidth: "600px",
-      margin: "0 auto 32px"
-    },
-    stepTitle: {
-      fontSize: "18px",
-      fontWeight: "600",
-      marginBottom: "24px",
-      color: "#1a1a1a"
+      marginBottom: "32px"
     },
     formGroup: {
       marginBottom: "24px"
@@ -381,7 +381,7 @@ export default function OnboardingFlow() {
     label: {
       display: "block",
       fontSize: "14px",
-      fontWeight: "500",
+      fontWeight: "600",
       marginBottom: "8px",
       color: "#333"
     },
@@ -390,612 +390,508 @@ export default function OnboardingFlow() {
     },
     input: {
       width: "100%",
-      padding: "10px 14px",
+      padding: "12px 16px",
       border: "1px solid #e0e0e0",
       borderRadius: "8px",
-      fontSize: "15px",
+      fontSize: "16px",
       backgroundColor: "white",
-      transition: "border-color 0.2s",
+      transition: "all 0.2s",
       outline: "none"
+    },
+    inputError: {
+      borderColor: "#EF4444"
     },
     select: {
       width: "100%",
-      padding: "10px 14px",
+      padding: "12px 16px",
       border: "1px solid #e0e0e0",
       borderRadius: "8px",
-      fontSize: "15px",
+      fontSize: "16px",
       backgroundColor: "white",
       cursor: "pointer",
       outline: "none"
     },
     helpText: {
-      fontSize: "12px",
+      fontSize: "13px",
       color: "#666",
-      marginTop: "4px"
+      marginTop: "6px"
     },
-    checkboxGroup: {
+    errorText: {
+      fontSize: "13px",
+      color: "#EF4444",
+      marginTop: "6px"
+    },
+    grid: {
       display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
       gap: "12px"
     },
-    checkboxLabel: {
-      display: "flex",
-      alignItems: "center",
-      padding: "12px 16px",
-      border: "1px solid #e0e0e0",
+    checkCard: {
+      padding: "16px",
+      border: "2px solid #e0e0e0",
       borderRadius: "8px",
       cursor: "pointer",
       transition: "all 0.2s",
-      fontSize: "14px"
+      backgroundColor: "white",
+      display: "flex",
+      alignItems: "center",
+      gap: "12px"
     },
-    checkboxLabelSelected: {
-      backgroundColor: "#e8f5e9",
-      borderColor: "#10B981"
+    checkCardSelected: {
+      borderColor: "#10B981",
+      backgroundColor: "#f0fdf4"
     },
-    checkbox: {
-      marginRight: "8px"
+    checkIcon: {
+      fontSize: "24px"
+    },
+    checkLabel: {
+      fontSize: "14px",
+      fontWeight: "500",
+      color: "#1a1a1a"
     },
     goalCard: {
-      display: "flex",
-      alignItems: "center",
-      padding: "16px",
-      border: "1px solid #e0e0e0",
+      padding: "20px",
+      border: "2px solid #e0e0e0",
       borderRadius: "8px",
       cursor: "pointer",
       transition: "all 0.2s",
-      marginBottom: "12px"
+      backgroundColor: "white"
     },
     goalCardSelected: {
-      backgroundColor: "#e8f5e9",
-      borderColor: "#10B981"
+      borderColor: "#10B981",
+      backgroundColor: "#f0fdf4"
+    },
+    goalHeader: {
+      display: "flex",
+      alignItems: "center",
+      gap: "12px",
+      marginBottom: "8px"
     },
     goalIcon: {
-      fontSize: "24px",
-      marginRight: "12px"
-    },
-    goalText: {
-      flex: 1
+      fontSize: "28px"
     },
     goalTitle: {
-      fontSize: "14px",
+      fontSize: "16px",
+      fontWeight: "600",
+      color: "#1a1a1a"
+    },
+    goalDescription: {
+      fontSize: "13px",
+      color: "#666",
+      marginLeft: "40px"
+    },
+    review: {
+      backgroundColor: "#f8f9fa",
+      padding: "24px",
+      borderRadius: "8px",
+      marginBottom: "16px"
+    },
+    reviewSection: {
+      marginBottom: "20px"
+    },
+    reviewLabel: {
+      fontSize: "13px",
+      color: "#666",
+      marginBottom: "4px"
+    },
+    reviewValue: {
+      fontSize: "16px",
       fontWeight: "500",
       color: "#1a1a1a"
     },
     actions: {
       display: "flex",
-      justifyContent: currentStep === 1 ? "center" : "space-between",
+      justifyContent: "space-between",
       alignItems: "center",
       marginTop: "48px"
     },
     button: {
-      padding: "14px 32px",
+      padding: "14px 28px",
       borderRadius: "8px",
       fontSize: "16px",
-      fontWeight: "500",
+      fontWeight: "600",
       cursor: "pointer",
       transition: "all 0.2s",
       border: "none"
     },
     primaryButton: {
-      backgroundColor: "#1a1a1a",
+      backgroundColor: "#10B981",
       color: "white"
     },
     secondaryButton: {
-      backgroundColor: "transparent",
+      backgroundColor: "white",
       color: "#666",
       border: "1px solid #e0e0e0"
     },
-    error: {
-      backgroundColor: "#ffebee",
-      color: "#c62828",
-      padding: "12px",
-      borderRadius: "8px",
-      marginBottom: "16px",
-      fontSize: "14px"
-    },
-    readySection: {
-      textAlign: "center" as const,
-      maxWidth: "800px",
-      margin: "0 auto"
-    },
-    readyGrid: {
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-      gap: "40px",
-      marginTop: "48px",
-      marginBottom: "60px"
-    },
-    readyCard: {
-      textAlign: "center" as const
-    },
-    readyIcon: {
-      fontSize: "60px",
-      marginBottom: "20px"
-    },
-    readyTitle: {
-      fontSize: "20px",
-      fontWeight: "600",
-      marginBottom: "12px",
-      color: "#1a1a1a"
-    },
-    readyDescription: {
-      fontSize: "16px",
-      color: "#666",
-      lineHeight: "1.5"
-    },
-    termsText: {
-      fontSize: "14px",
-      color: "#666",
-      textAlign: "center" as const,
-      marginTop: "24px"
-    },
-    link: {
-      color: "#5B5FCF",
-      textDecoration: "none"
-    },
-    notReadyText: {
-      fontSize: "16px",
-      color: "#666",
-      textAlign: "center" as const,
-      marginTop: "24px"
+    buttonDisabled: {
+      opacity: 0.5,
+      cursor: "not-allowed"
     }
   };
   
-  // Build form action URL with preserved parameters
-  const formActionUrl = urlParams?.shop 
-    ? `/app?shop=${urlParams.shop}${urlParams.host ? `&host=${urlParams.host}` : ''}`
-    : '/app';
+  // Progress calculation
+  const progressPercentage = ((currentStep - 1) / (totalSteps - 1)) * 100;
   
   return (
     <div style={styles.container}>
-      {/* Step 1: Welcome */}
-      {currentStep === 1 && (
-        <>
-          <div style={styles.header}>
-            <h1 style={styles.title}>Welcome to Cashback Rewards</h1>
-            <p style={styles.subtitle}>Let's get your loyalty program set up</p>
-          </div>
+      {/* Progress Bar */}
+      <div style={styles.progressBar}>
+        <div style={styles.progressSteps}>
+          <div style={styles.progressLine} />
+          <div style={{ ...styles.progressLineFill, width: `${progressPercentage}%` }} />
           
-          <div style={styles.contentSection}>
-            <h2 style={{ fontSize: "32px", fontWeight: "600", marginBottom: "48px" }}>
-              Get more repeat customers
-            </h2>
-            
-            <div style={styles.featureList}>
-              <div style={styles.featureItem}>
-                <span style={styles.featureIcon}>🎁</span>
-                <div style={styles.featureText}>
-                  <p style={styles.featureDescription}>
-                    Cashback Rewards gives your customers cashback on every order.
-                  </p>
-                </div>
+          {["Business Info", "Products & Goals", "Review & Launch"].map((label, index) => (
+            <div key={index} style={styles.progressStep}>
+              <div style={{
+                ...styles.progressDot,
+                ...(currentStep > index + 1 || (currentStep === totalSteps && index === totalSteps - 1) 
+                  ? styles.progressDotActive 
+                  : styles.progressDotInactive)
+              }}>
+                {currentStep > index + 1 ? "✓" : index + 1}
               </div>
-              
-              <div style={styles.featureItem}>
-                <span style={styles.featureIcon}>❤️</span>
-                <div style={styles.featureText}>
-                  <p style={styles.featureDescription}>
-                    Customers love being rewarded and are 1.5x more likely to make another purchase.
-                  </p>
-                </div>
-              </div>
-              
-              <div style={styles.featureItem}>
-                <span style={styles.featureIcon}>🚀</span>
-                <div style={styles.featureText}>
-                  <p style={styles.featureDescription}>
-                    More returning customers = higher average customer value and a more profitable business.
-                  </p>
-                </div>
-              </div>
+              <span style={styles.progressLabel}>{label}</span>
             </div>
-          </div>
-          
-          <div style={styles.actions}>
-            <button
-              onClick={handleNext}
-              style={{
-                ...styles.button,
-                ...styles.primaryButton
-              }}
-              onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
-              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
-            >
-              Get started
-            </button>
-          </div>
-          
-          <p style={styles.termsText}>
-            By proceeding, you agree to the{" "}
-            <a href="#" style={styles.link}>Terms of Service</a> and{" "}
-            <a href="#" style={styles.link}>Privacy Policy</a>
-          </p>
-        </>
-      )}
+          ))}
+        </div>
+      </div>
       
-      {/* Step 2: Launcher Info */}
-      {currentStep === 2 && (
-        <>
-          <div style={styles.header}>
-            <h1 style={styles.title}>Easy access to your loyalty program</h1>
-            <p style={styles.subtitle}>
-              Cashback Rewards adds a floating button to your website, we call it "the Launcher". 
-              Customers can click it to access your loyalty program.
-            </p>
-          </div>
-          
-          <div style={styles.launcherDemo}>
-            <span style={styles.launcherText}>The launcher</span>
-            <span style={{ fontSize: "32px" }}>→</span>
-            <div 
-              style={styles.launcherButton}
-              onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-              onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
-            >
-              🎁
-            </div>
-          </div>
-          
-          <div style={styles.actions}>
-            <button
-              onClick={handleBack}
-              style={{
-                ...styles.button,
-                ...styles.secondaryButton
-              }}
-              onMouseOver={(e) => e.currentTarget.style.borderColor = '#999'}
-              onMouseOut={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
-            >
-              Back
-            </button>
-            <button
-              onClick={handleNext}
-              style={{
-                ...styles.button,
-                ...styles.primaryButton
-              }}
-              onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
-              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
-            >
-              Next
-            </button>
-          </div>
-        </>
-      )}
-      
-      {/* Step 3: Ready to Start */}
-      {currentStep === 3 && (
-        <>
-          <div style={styles.readySection}>
-            <h1 style={styles.title}>You're ready to start rewarding!</h1>
-            
-            <div style={styles.readyGrid}>
-              <div style={styles.readyCard}>
-                <div style={styles.readyIcon}>🎁</div>
-                <h3 style={styles.readyTitle}>Customers will earn cashback on every order</h3>
-                <p style={styles.readyDescription}>
-                  They'll earn 5% back in cashback, which is $5 cashback for every $100 they spend.
-                </p>
-              </div>
-              
-              <div style={styles.readyCard}>
-                <div style={styles.readyIcon}>📱</div>
-                <h3 style={styles.readyTitle}>Cashback Rewards will be added to your store</h3>
-                <p style={styles.readyDescription}>
-                  A floating button will appear on your website so customers can access your loyalty program.
-                </p>
-              </div>
-              
-              <div style={styles.readyCard}>
-                <div style={styles.readyIcon}>✉️</div>
-                <h3 style={styles.readyTitle}>Customers will be notified by email</h3>
-                <p style={styles.readyDescription}>
-                  Customers will be sent an email every time they earn or redeem cashback. 
-                  <a href="#" style={styles.link}> Preview</a>
-                </p>
-              </div>
-            </div>
-          </div>
-          
-          <div style={styles.actions}>
-            <button
-              onClick={handleBack}
-              style={{
-                ...styles.button,
-                ...styles.secondaryButton
-              }}
-              onMouseOver={(e) => e.currentTarget.style.borderColor = '#999'}
-              onMouseOut={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
-            >
-              Back
-            </button>
-            <button
-              onClick={handleNext}
-              style={{
-                ...styles.button,
-                ...styles.primaryButton
-              }}
-              onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
-              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
-            >
-              Launch your program
-            </button>
-          </div>
-          
-          <p style={styles.notReadyText}>
-            💡 Not ready? <a href="#" style={styles.link}>Explore Cashback Rewards</a> and launch later.
-          </p>
-        </>
-      )}
-      
-      {/* Step 4: Business Setup */}
-      {currentStep === 4 && (
-        <>
-          <div style={styles.header}>
-            <h1 style={styles.title}>Tell us about your business</h1>
-            <p style={styles.subtitle}>This helps us customize your rewards program</p>
-          </div>
-          
-          <div style={styles.form}>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>
-                Business Name <span style={styles.required}>*</span>
-              </label>
-              <input
-                type="text"
-                name="businessName"
-                value={formData.businessName}
-                onChange={(e) => setFormData({...formData, businessName: e.target.value})}
-                style={styles.input}
-                placeholder="Your Store Name"
-                required
-              />
+      <Form method="post">
+        {/* Step 1: Business Information */}
+        {currentStep === 1 && (
+          <>
+            <div style={styles.header}>
+              <h1 style={styles.title}>Welcome to Cashback Rewards</h1>
+              <p style={styles.subtitle}>Let's get your loyalty program set up in just a few minutes</p>
             </div>
             
-            <div style={styles.formGroup}>
-              <label style={styles.label}>
-                Number of Employees <span style={styles.required}>*</span>
-              </label>
-              <select
-                name="employeeCount"
-                value={formData.employeeCount}
-                onChange={(e) => setFormData({...formData, employeeCount: e.target.value})}
-                style={styles.select}
-                required
-              >
-                <option value="">Select team size</option>
-                <option value="1">Just me</option>
-                <option value="2-5">2-5 employees</option>
-                <option value="6-10">6-10 employees</option>
-                <option value="11-50">11-50 employees</option>
-                <option value="50+">50+ employees</option>
-              </select>
-            </div>
-            
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Country</label>
-                <input
-                  type="text"
-                  name="country"
-                  value={formData.country}
-                  onChange={(e) => setFormData({...formData, country: e.target.value})}
-                  style={styles.input}
-                  placeholder="United States"
-                />
-              </div>
-              
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Currency</label>
-                <select
-                  name="currency"
-                  value={formData.currency}
-                  onChange={(e) => setFormData({...formData, currency: e.target.value})}
-                  style={styles.select}
-                >
-                  <option value="USD">USD ($)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="GBP">GBP (£)</option>
-                  <option value="CAD">CAD ($)</option>
-                  <option value="AUD">AUD ($)</option>
-                </select>
-              </div>
-            </div>
-            
-            <div style={styles.formGroup}>
-              <label style={styles.label}>
-                Main Contact Email <span style={styles.required}>*</span>
-              </label>
-              <input
-                type="email"
-                name="contactEmail"
-                value={formData.contactEmail}
-                onChange={(e) => setFormData({...formData, contactEmail: e.target.value})}
-                style={styles.input}
-                placeholder="you@example.com"
-                required
-              />
-              <p style={styles.helpText}>We'll use this for important updates about your rewards program</p>
-            </div>
-          </div>
-          
-          <div style={styles.actions}>
-            <button
-              type="button"
-              onClick={handleBack}
-              style={{
-                ...styles.button,
-                ...styles.secondaryButton
-              }}
-              onMouseOver={(e) => e.currentTarget.style.borderColor = '#999'}
-              onMouseOut={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={handleNext}
-              style={{
-                ...styles.button,
-                ...styles.primaryButton
-              }}
-              onMouseOver={(e) => e.currentTarget.style.opacity = '0.8'}
-              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
-            >
-              Next Step →
-            </button>
-          </div>
-        </>
-      )}
-      
-      {/* Step 5: Industry & Goals */}
-      {currentStep === 5 && (
-        <>
-          <div style={styles.header}>
-            <h1 style={styles.title}>What are your goals?</h1>
-            <p style={styles.subtitle}>This helps us optimize your rewards program</p>
-          </div>
-          
-          <Form method="post" action={formActionUrl}>
             <div style={styles.form}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>
-                  What type of products do you sell? <span style={styles.required}>*</span>
-                </label>
-                <p style={styles.helpText}>Select all that apply</p>
-                <div style={styles.checkboxGroup}>
-                  {productTypeOptions.map((type) => (
-                    <label
-                      key={type}
-                      style={{
-                        ...styles.checkboxLabel,
-                        ...(formData.productTypes.includes(type) ? styles.checkboxLabelSelected : {})
-                      }}
+              <div style={styles.formSection}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    Business Name <span style={styles.required}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="businessName"
+                    value={formData.businessName}
+                    onChange={(e) => setFormData({...formData, businessName: e.target.value})}
+                    style={{
+                      ...styles.input,
+                      ...(errors.businessName ? styles.inputError : {})
+                    }}
+                    placeholder="Your Store Name"
+                    required
+                  />
+                  {errors.businessName && <p style={styles.errorText}>{errors.businessName}</p>}
+                </div>
+                
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    Team Size <span style={styles.required}>*</span>
+                  </label>
+                  <select
+                    name="employeeCount"
+                    value={formData.employeeCount}
+                    onChange={(e) => setFormData({...formData, employeeCount: e.target.value})}
+                    style={styles.select}
+                    required
+                  >
+                    <option value="">Select team size</option>
+                    <option value="1">Just me</option>
+                    <option value="2-5">2-5 employees</option>
+                    <option value="6-10">6-10 employees</option>
+                    <option value="11-50">11-50 employees</option>
+                    <option value="50+">50+ employees</option>
+                  </select>
+                  {errors.employeeCount && <p style={styles.errorText}>{errors.employeeCount}</p>}
+                </div>
+                
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Country</label>
+                    <input
+                      type="text"
+                      name="country"
+                      value={formData.country}
+                      onChange={(e) => setFormData({...formData, country: e.target.value})}
+                      style={styles.input}
+                      placeholder="United States"
+                    />
+                  </div>
+                  
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Currency</label>
+                    <select
+                      name="currency"
+                      value={formData.currency}
+                      onChange={(e) => setFormData({...formData, currency: e.target.value})}
+                      style={styles.select}
                     >
-                      <input
-                        type="checkbox"
-                        name="productTypes"
-                        value={type}
-                        checked={formData.productTypes.includes(type)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setFormData({
-                              ...formData,
-                              productTypes: [...formData.productTypes, type]
-                            });
-                          } else {
-                            setFormData({
-                              ...formData,
-                              productTypes: formData.productTypes.filter(t => t !== type)
-                            });
-                          }
+                      <option value="USD">USD ($)</option>
+                      <option value="EUR">EUR (€)</option>
+                      <option value="GBP">GBP (£)</option>
+                      <option value="CAD">CAD ($)</option>
+                      <option value="AUD">AUD ($)</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    Contact Email <span style={styles.required}>*</span>
+                  </label>
+                  <input
+                    type="email"
+                    name="contactEmail"
+                    value={formData.contactEmail}
+                    onChange={(e) => setFormData({...formData, contactEmail: e.target.value})}
+                    style={{
+                      ...styles.input,
+                      ...(errors.contactEmail ? styles.inputError : {})
+                    }}
+                    placeholder="you@example.com"
+                    required
+                  />
+                  <p style={styles.helpText}>We'll use this for important updates about your rewards program</p>
+                  {errors.contactEmail && <p style={styles.errorText}>{errors.contactEmail}</p>}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+        
+        {/* Step 2: Products & Goals */}
+        {currentStep === 2 && (
+          <>
+            <div style={styles.header}>
+              <h1 style={styles.title}>What do you sell?</h1>
+              <p style={styles.subtitle}>This helps us optimize your rewards program</p>
+            </div>
+            
+            <div style={styles.form}>
+              <div style={styles.formSection}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    Product Categories <span style={styles.required}>*</span>
+                  </label>
+                  <p style={styles.helpText}>Select all that apply</p>
+                  <div style={styles.grid}>
+                    {productTypeOptions.map((type) => (
+                      <div
+                        key={type.value}
+                        style={{
+                          ...styles.checkCard,
+                          ...(formData.productTypes.includes(type.value) ? styles.checkCardSelected : {})
                         }}
-                        style={styles.checkbox}
-                      />
-                      {type}
-                    </label>
-                  ))}
-                </div>
-              </div>
-              
-              <div style={styles.formGroup}>
-                <label style={styles.label}>
-                  What do you want to achieve with this rewards program?
-                </label>
-                <p style={styles.helpText}>Select your main goals (optional)</p>
-                <div>
-                  {goalOptions.map((goal) => (
-                    <div
-                      key={goal.value}
-                      style={{
-                        ...styles.goalCard,
-                        ...(formData.goals.includes(goal.value) ? styles.goalCardSelected : {})
-                      }}
-                      onClick={() => {
-                        if (formData.goals.includes(goal.value)) {
-                          setFormData({
-                            ...formData,
-                            goals: formData.goals.filter(g => g !== goal.value)
-                          });
-                        } else {
-                          setFormData({
-                            ...formData,
-                            goals: [...formData.goals, goal.value]
-                          });
-                        }
-                      }}
-                    >
-                      <span style={styles.goalIcon}>{goal.icon}</span>
-                      <div style={styles.goalText}>
-                        <div style={styles.goalTitle}>{goal.label}</div>
+                        onClick={() => toggleProductType(type.value)}
+                      >
+                        <span style={styles.checkIcon}>{type.icon}</span>
+                        <span style={styles.checkLabel}>{type.label}</span>
+                        <input
+                          type="checkbox"
+                          name="productTypes"
+                          value={type.value}
+                          checked={formData.productTypes.includes(type.value)}
+                          onChange={() => {}}
+                          style={{ display: "none" }}
+                        />
                       </div>
-                      <input
-                        type="checkbox"
-                        name="goals"
-                        value={goal.value}
-                        checked={formData.goals.includes(goal.value)}
-                        onChange={() => {}}
-                        style={{ marginLeft: "auto" }}
-                      />
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  {errors.productTypes && <p style={styles.errorText}>{errors.productTypes}</p>}
                 </div>
               </div>
               
-              {/* Error message if no product types selected */}
-              {formData.productTypes.length === 0 && (
-                <div style={styles.error}>
-                  Please select at least one product type to continue
+              <div style={styles.formSection}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>What are your main goals?</label>
+                  <p style={styles.helpText}>Select any that apply (optional)</p>
+                  <div style={{ display: "grid", gap: "12px" }}>
+                    {goalOptions.map((goal) => (
+                      <div
+                        key={goal.value}
+                        style={{
+                          ...styles.goalCard,
+                          ...(formData.goals.includes(goal.value) ? styles.goalCardSelected : {})
+                        }}
+                        onClick={() => toggleGoal(goal.value)}
+                      >
+                        <div style={styles.goalHeader}>
+                          <span style={styles.goalIcon}>{goal.icon}</span>
+                          <span style={styles.goalTitle}>{goal.label}</span>
+                        </div>
+                        <p style={styles.goalDescription}>{goal.description}</p>
+                        <input
+                          type="checkbox"
+                          name="goals"
+                          value={goal.value}
+                          checked={formData.goals.includes(goal.value)}
+                          onChange={() => {}}
+                          style={{ display: "none" }}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              )}
+              </div>
+            </div>
+          </>
+        )}
+        
+        {/* Step 3: Review & Launch */}
+        {currentStep === 3 && (
+          <>
+            <div style={styles.header}>
+              <h1 style={styles.title}>Ready to launch! 🎉</h1>
+              <p style={styles.subtitle}>Review your settings and launch your rewards program</p>
+            </div>
+            
+            <div style={styles.form}>
+              <div style={styles.review}>
+                <h3 style={{ margin: "0 0 20px 0", fontSize: "18px", fontWeight: "600" }}>Your Settings</h3>
+                
+                <div style={styles.reviewSection}>
+                  <p style={styles.reviewLabel}>Business Name</p>
+                  <p style={styles.reviewValue}>{formData.businessName}</p>
+                </div>
+                
+                <div style={styles.reviewSection}>
+                  <p style={styles.reviewLabel}>Contact Email</p>
+                  <p style={styles.reviewValue}>{formData.contactEmail}</p>
+                </div>
+                
+                <div style={styles.reviewSection}>
+                  <p style={styles.reviewLabel}>Product Categories</p>
+                  <p style={styles.reviewValue}>
+                    {formData.productTypes
+                      .map(type => productTypeOptions.find(opt => opt.value === type)?.label)
+                      .filter(Boolean)
+                      .join(", ")}
+                  </p>
+                </div>
+                
+                {formData.goals.length > 0 && (
+                  <div style={styles.reviewSection}>
+                    <p style={styles.reviewLabel}>Goals</p>
+                    <p style={styles.reviewValue}>
+                      {formData.goals
+                        .map(goal => goalOptions.find(opt => opt.value === goal)?.label)
+                        .filter(Boolean)
+                        .join(", ")}
+                    </p>
+                  </div>
+                )}
+              </div>
               
-              {/* Hidden inputs to preserve step 4 data */}
+              <div style={styles.formSection}>
+                <h3 style={{ margin: "0 0 16px 0", fontSize: "18px", fontWeight: "600" }}>
+                  What happens next?
+                </h3>
+                <ul style={{ margin: 0, paddingLeft: "20px", lineHeight: "1.8" }}>
+                  <li>We'll create 4 default reward tiers (Bronze, Silver, Gold, Platinum)</li>
+                  <li>Customers will automatically earn cashback on every purchase</li>
+                  <li>You can customize tiers and settings anytime from the dashboard</li>
+                  <li>Email notifications will be sent when customers earn rewards</li>
+                </ul>
+              </div>
+              
+              {/* Hidden inputs for all form data */}
               <input type="hidden" name="businessName" value={formData.businessName} />
               <input type="hidden" name="employeeCount" value={formData.employeeCount} />
               <input type="hidden" name="country" value={formData.country} />
               <input type="hidden" name="currency" value={formData.currency} />
               <input type="hidden" name="contactEmail" value={formData.contactEmail} />
+              {formData.productTypes.map((type, i) => (
+                <input key={`product-${i}`} type="hidden" name="productTypes" value={type} />
+              ))}
+              {formData.goals.map((goal, i) => (
+                <input key={`goal-${i}`} type="hidden" name="goals" value={goal} />
+              ))}
             </div>
-            
-            <div style={styles.actions}>
-              <button
-                type="button"
-                onClick={handleBack}
-                style={{
-                  ...styles.button,
-                  ...styles.secondaryButton
-                }}
-                onMouseOver={(e) => e.currentTarget.style.borderColor = '#999'}
-                onMouseOut={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
-              >
-                ← Back
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting || formData.productTypes.length === 0}
-                style={{
-                  ...styles.button,
-                  ...styles.primaryButton,
-                  opacity: (isSubmitting || formData.productTypes.length === 0) ? 0.6 : 1,
-                  cursor: (isSubmitting || formData.productTypes.length === 0) ? "not-allowed" : "pointer"
-                }}
-                onMouseOver={(e) => {
-                  if (!isSubmitting && formData.productTypes.length > 0) {
-                    e.currentTarget.style.opacity = '0.8';
-                  }
-                }}
-                onMouseOut={(e) => {
-                  if (!isSubmitting && formData.productTypes.length > 0) {
-                    e.currentTarget.style.opacity = '1';
-                  }
-                }}
-              >
-                {isSubmitting ? "Setting up..." : "Complete Setup"}
-              </button>
-            </div>
-          </Form>
-        </>
-      )}
+          </>
+        )}
+        
+        {/* Action Buttons */}
+        <div style={styles.actions}>
+          <button
+            type="button"
+            onClick={handleBack}
+            style={{
+              ...styles.button,
+              ...styles.secondaryButton,
+              visibility: currentStep === 1 ? "hidden" : "visible"
+            }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'white'}
+          >
+            ← Back
+          </button>
+          
+          {currentStep < 3 ? (
+            <button
+              type="button"
+              onClick={handleNext}
+              disabled={
+                (currentStep === 1 && !canProceedStep1) ||
+                (currentStep === 2 && !canProceedStep2)
+              }
+              style={{
+                ...styles.button,
+                ...styles.primaryButton,
+                ...((currentStep === 1 && !canProceedStep1) || (currentStep === 2 && !canProceedStep2) 
+                  ? styles.buttonDisabled 
+                  : {})
+              }}
+              onMouseOver={(e) => {
+                if ((currentStep === 1 && canProceedStep1) || (currentStep === 2 && canProceedStep2)) {
+                  e.currentTarget.style.backgroundColor = '#059669';
+                }
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.backgroundColor = '#10B981';
+              }}
+            >
+              Continue →
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              style={{
+                ...styles.button,
+                ...styles.primaryButton,
+                ...(isSubmitting ? styles.buttonDisabled : {})
+              }}
+              onMouseOver={(e) => {
+                if (!isSubmitting) {
+                  e.currentTarget.style.backgroundColor = '#059669';
+                }
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.backgroundColor = '#10B981';
+              }}
+            >
+              {isSubmitting ? "Launching..." : "Launch Rewards Program 🚀"}
+            </button>
+          )}
+        </div>
+        
+        {/* General Error */}
+        {errors.general && (
+          <div style={{
+            marginTop: "16px",
+            padding: "12px",
+            backgroundColor: "#ffebee",
+            color: "#c62828",
+            borderRadius: "8px",
+            textAlign: "center" as const,
+            fontSize: "14px"
+          }}>
+            {errors.general}
+          </div>
+        )}
+      </Form>
     </div>
   );
 }
