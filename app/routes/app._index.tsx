@@ -10,6 +10,11 @@ import { useState } from "react";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   
+  // Get URL parameters to preserve in redirects
+  const url = new URL(request.url);
+  const shop = url.searchParams.get("shop") || session.shop;
+  const host = url.searchParams.get("host");
+  
   // Check if onboarding is complete for this shop
   const sessionData = await prisma.session.findFirst({
     where: { shop: session.shop },
@@ -25,9 +30,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Handle null or undefined onboardingCompleted
   const isOnboardingCompleted = sessionData?.onboardingCompleted === true;
   
-  // If onboarding is completed, redirect to dashboard
+  // If onboarding is completed, redirect to dashboard with context preserved
   if (isOnboardingCompleted) {
-    return redirect("/app/dashboard");
+    const redirectUrl = new URL("/app/dashboard", url.origin);
+    redirectUrl.searchParams.set("shop", shop);
+    if (host) redirectUrl.searchParams.set("host", host);
+    
+    return redirect(redirectUrl.toString());
   }
   
   // Check if there's existing onboarding data (in case of incomplete submission)
@@ -72,6 +81,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
+  
+  // Preserve URL parameters for redirect
+  const url = new URL(request.url);
+  const shop = url.searchParams.get("shop") || session.shop;
+  const host = url.searchParams.get("host");
   
   // Collect all onboarding data
   const onboardingData = {
@@ -152,7 +166,12 @@ export async function action({ request }: ActionFunctionArgs) {
       });
     }
     
-    return redirect("/app/dashboard");
+    // Build redirect URL with preserved context
+    const redirectUrl = new URL("/app/dashboard", url.origin);
+    redirectUrl.searchParams.set("shop", shop);
+    if (host) redirectUrl.searchParams.set("host", host);
+    
+    return redirect(redirectUrl.toString());
   } catch (error) {
     console.error("Onboarding error:", error);
     return json({ error: "Failed to save onboarding data. Please try again." }, { status: 500 });
