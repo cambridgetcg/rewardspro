@@ -8,12 +8,15 @@ import { useState } from "react";
 
 // Check if onboarding is complete
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   
   // Get URL parameters to preserve in redirects
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop") || session.shop;
   const host = url.searchParams.get("host");
+  
+  console.log("App index loader - URL:", url.toString());
+  console.log("App index loader - Shop:", shop);
   
   // Check if onboarding is complete for this shop
   const sessionData = await prisma.session.findFirst({
@@ -27,6 +30,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   });
   
+  console.log("App index loader - Session data:", sessionData);
+  console.log("App index loader - Onboarding completed:", sessionData?.onboardingCompleted);
+  
   // Handle null or undefined onboardingCompleted
   const isOnboardingCompleted = sessionData?.onboardingCompleted === true;
   
@@ -36,8 +42,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
     redirectUrl.searchParams.set("shop", shop);
     if (host) redirectUrl.searchParams.set("host", host);
     
+    console.log("App index loader - Redirecting to dashboard:", redirectUrl.toString());
     return redirect(redirectUrl.toString());
   }
+  
+  // If onboarding is not complete, show onboarding flow
+  console.log("App index loader - Showing onboarding flow");
   
   // Check if there's existing onboarding data (in case of incomplete submission)
   const existingOnboarding = await prisma.onboarding.findUnique({
@@ -45,7 +55,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
   
   // Get shop details from Shopify
-  const { admin } = await authenticate.admin(request);
   const response = await admin.graphql(
     `#graphql
     query shopDetails {
@@ -67,6 +76,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   
   const shopData = await response.json();
   
+  if (!shopData?.data?.shop) {
+    console.error("App index loader - Failed to fetch shop data");
+    throw new Response("Failed to load shop information", { status: 500 });
+  }
+  
   return json({
     shop: {
       ...shopData.data.shop,
@@ -74,7 +88,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
     sessionEmail: sessionData?.email || shopData.data.shop.email,
     locale: sessionData?.locale,
-    existingOnboarding
+    existingOnboarding,
+    urlParams: { shop, host } // Pass URL params to component
   });
 }
 
@@ -86,6 +101,8 @@ export async function action({ request }: ActionFunctionArgs) {
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop") || session.shop;
   const host = url.searchParams.get("host");
+  
+  console.log("App index action - Processing form submission");
   
   // Collect all onboarding data
   const onboardingData = {
@@ -115,11 +132,15 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     });
     
+    console.log("App index action - Onboarding data saved");
+    
     // Mark onboarding as complete in the session
     await prisma.session.updateMany({
       where: { shop: session.shop },
       data: { onboardingCompleted: true }
     });
+    
+    console.log("App index action - Session updated");
     
     // Create default tiers for the merchant if they don't exist
     const existingTiers = await prisma.tier.count({
@@ -164,6 +185,8 @@ export async function action({ request }: ActionFunctionArgs) {
           }
         ]
       });
+      
+      console.log("App index action - Default tiers created");
     }
     
     // Build redirect URL with preserved context
@@ -171,7 +194,9 @@ export async function action({ request }: ActionFunctionArgs) {
     redirectUrl.searchParams.set("shop", shop);
     if (host) redirectUrl.searchParams.set("host", host);
     
+    console.log("App index action - Redirecting to:", redirectUrl.toString());
     return redirect(redirectUrl.toString());
+    
   } catch (error) {
     console.error("Onboarding error:", error);
     return json({ error: "Failed to save onboarding data. Please try again." }, { status: 500 });
@@ -179,14 +204,18 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function OnboardingFlow() {
-  const { shop, sessionEmail, locale, existingOnboarding } = useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>();
+  
+  // Safely destructure with defaults
+  const { shop, sessionEmail, locale, existingOnboarding, urlParams } = data || {};
+  
   const navigation = useNavigation();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
-    businessName: existingOnboarding?.businessName || shop.name || "",
+    businessName: existingOnboarding?.businessName || shop?.name || "",
     employeeCount: existingOnboarding?.employeeCount || "",
-    country: existingOnboarding?.country || shop.countryCode || "",
-    currency: existingOnboarding?.currency || shop.currencyCode || "USD",
+    country: existingOnboarding?.country || shop?.countryCode || "",
+    currency: existingOnboarding?.currency || shop?.currencyCode || "USD",
     contactEmail: existingOnboarding?.contactEmail || sessionEmail || "",
     productTypes: existingOnboarding?.productTypes || [] as string[],
     goals: existingOnboarding?.goals || [] as string[]
@@ -231,6 +260,16 @@ export default function OnboardingFlow() {
   const handleBack = () => {
     setCurrentStep(currentStep - 1);
   };
+  
+  // Ensure we have data before rendering
+  if (!shop) {
+    return (
+      <div style={{ padding: "40px", textAlign: "center" }}>
+        <h2>Loading...</h2>
+        <p>Please wait while we load your shop information.</p>
+      </div>
+    );
+  }
   
   const styles = {
     container: {
@@ -502,6 +541,11 @@ export default function OnboardingFlow() {
     }
   };
   
+  // Build form action URL with preserved parameters
+  const formActionUrl = urlParams?.shop 
+    ? `/app?shop=${urlParams.shop}${urlParams.host ? `&host=${urlParams.host}` : ''}`
+    : '/app';
+  
   return (
     <div style={styles.container}>
       {/* Step 1: Welcome */}
@@ -692,7 +736,7 @@ export default function OnboardingFlow() {
             <p style={styles.subtitle}>This helps us customize your rewards program</p>
           </div>
           
-          <Form method="post">
+          <Form method="post" action={formActionUrl}>
             <div style={styles.form}>
               <div style={styles.formGroup}>
                 <label style={styles.label}>
@@ -812,7 +856,7 @@ export default function OnboardingFlow() {
             <p style={styles.subtitle}>This helps us optimize your rewards program</p>
           </div>
           
-          <Form method="post">
+          <Form method="post" action={formActionUrl}>
             <div style={styles.form}>
               <div style={styles.formGroup}>
                 <label style={styles.label}>
