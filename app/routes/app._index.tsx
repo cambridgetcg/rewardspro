@@ -22,8 +22,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   });
   
+  // Handle null or undefined onboardingCompleted
+  const isOnboardingCompleted = sessionData?.onboardingCompleted === true;
+  
   // If onboarding is completed, redirect to dashboard
-  if (sessionData?.onboardingCompleted) {
+  if (isOnboardingCompleted) {
     return redirect("/app/dashboard");
   }
   
