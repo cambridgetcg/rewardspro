@@ -126,3 +126,4 @@ enum EvaluationPeriod {
   ANNUAL         // 12 months rolling (default)
   LIFETIME       // All-time spending, never expires
 }
+
