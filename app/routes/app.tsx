@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { Link, Outlet, useLoaderData, useRouteError, useNavigation } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
@@ -11,27 +11,57 @@ export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    // Log the request URL to see if shop parameter is present
     const url = new URL(request.url);
-    console.log("App loader - Request URL:", url.toString());
-    console.log("App loader - Shop param:", url.searchParams.get("shop"));
+    const shop = url.searchParams.get("shop");
+    const host = url.searchParams.get("host");
     
-    // Authenticate once for all child routes
+    console.log("App loader - Request URL:", url.toString());
+    console.log("App loader - Shop param:", shop);
+    
+    // Try to authenticate first
     const { session } = await authenticate.admin(request);
     
     console.log("App loader - Authentication successful for shop:", session.shop);
+    
+    // If shop parameter is missing but auth worked, redirect with shop
+    if (!shop && session.shop) {
+      const redirectUrl = new URL(request.url);
+      redirectUrl.searchParams.set("shop", session.shop);
+      if (host) redirectUrl.searchParams.set("host", host);
+      
+      console.log("App loader - Redirecting to add shop parameter:", redirectUrl.toString());
+      return redirect(redirectUrl.toString());
+    }
     
     return json({
       apiKey: process.env.SHOPIFY_API_KEY || "",
       shop: session.shop,
     });
+    
   } catch (error) {
     console.error("App loader - Authentication error:", error);
     
-    // Check if it's an authentication error
+    // Get URL info for better error handling
+    const url = new URL(request.url);
+    const shop = url.searchParams.get("shop");
+    
+    // If no shop parameter and auth failed, we can't recover
+    if (!shop) {
+      console.error("App loader - No shop parameter and authentication failed");
+      
+      // Show a helpful error message instead of redirect loop
+      throw new Response(
+        "Please access this app from your Shopify admin panel: Admin → Apps → Your App Name", 
+        { 
+          status: 400,
+          statusText: "Missing Shop Context"
+        }
+      );
+    }
+    
+    // If we have shop parameter, proceed with normal auth redirect
     if (error instanceof Response) {
       console.error("App loader - Error status:", error.status);
-      console.error("App loader - Error headers:", error.headers);
     }
     
     // Re-throw to trigger Shopify's login flow
