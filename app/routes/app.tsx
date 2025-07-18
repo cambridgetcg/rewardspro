@@ -6,6 +6,7 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -15,21 +16,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const shop = url.searchParams.get("shop");
     const host = url.searchParams.get("host");
     
-    console.log("App loader - Request URL:", url.toString());
-    console.log("App loader - Shop param:", shop);
-    
-    // Try to authenticate first
+    // Authenticate
     const { session } = await authenticate.admin(request);
-    
-    console.log("App loader - Authentication successful for shop:", session.shop);
     
     // If shop parameter is missing but auth worked, redirect with shop
     if (!shop && session.shop) {
       const redirectUrl = new URL(request.url);
       redirectUrl.searchParams.set("shop", session.shop);
       if (host) redirectUrl.searchParams.set("host", host);
-      
-      console.log("App loader - Redirecting to add shop parameter:", redirectUrl.toString());
       return redirect(redirectUrl.toString());
     }
     
@@ -47,9 +41,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     
     // If no shop parameter and auth failed, we can't recover
     if (!shop) {
-      console.error("App loader - No shop parameter and authentication failed");
-      
-      // Show a helpful error message instead of redirect loop
       throw new Response(
         "Please access this app from your Shopify admin panel: Admin → Apps → Your App Name", 
         { 
@@ -57,11 +48,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           statusText: "Missing Shop Context"
         }
       );
-    }
-    
-    // If we have shop parameter, proceed with normal auth redirect
-    if (error instanceof Response) {
-      console.error("App loader - Error status:", error.status);
     }
     
     // Re-throw to trigger Shopify's login flow
