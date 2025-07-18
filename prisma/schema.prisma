@@ -23,7 +23,6 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
-  onboardingCompleted Boolean @default(false)
   
   @@index([shop])
   @@index([expires])
@@ -108,12 +107,14 @@ model Onboarding {
   country           String
   currency          String
   contactEmail      String
-  productTypes      String[]    // Array of product types
-  goals             String[]    // Array of selected goals
+  productTypes      String[]
+  goals             String[]
+  completedAt       DateTime    @default(now()) // Automatically set when created
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   
   @@index([shopDomain])
+  @@index([completedAt])
 }
 
 enum TransactionStatus {
@@ -126,4 +127,3 @@ enum EvaluationPeriod {
   ANNUAL         // 12 months rolling (default)
   LIFETIME       // All-time spending, never expires
 }
-
