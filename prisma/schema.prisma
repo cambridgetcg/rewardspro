@@ -109,12 +109,30 @@ model Onboarding {
   contactEmail      String
   productTypes      String[]
   goals             String[]
-  completedAt       DateTime    @default(now()) // Automatically set when created
+  completedAt       DateTime    @default(now())
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   
   @@index([shopDomain])
   @@index([completedAt])
+}
+
+model MigrationHistory {
+  id                String      @id @default(uuid())
+  shopDomain        String
+  status            MigrationStatus @default(PENDING)
+  totalRecords      Int         @default(0)
+  processedRecords  Int         @default(0)
+  failedRecords     Int         @default(0)
+  errors            Json?       // Array of error messages
+  metadata          Json?       // Migration configuration (e.g., date range, batch size)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime    @default(now())
+  
+  @@index([shopDomain])
+  @@index([status])
+  @@index([createdAt])
 }
 
 enum TransactionStatus {
@@ -126,4 +144,12 @@ enum TransactionStatus {
 enum EvaluationPeriod {
   ANNUAL         // 12 months rolling (default)
   LIFETIME       // All-time spending, never expires
+}
+
+enum MigrationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
 }
