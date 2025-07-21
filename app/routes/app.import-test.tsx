@@ -90,9 +90,6 @@ export async function action({ request }: ActionFunctionArgs) {
       // Test fetching ALL orders without date restrictions
       const allOrdersQuery = `
         query GetAllOrdersTest {
-          ordersCount: orders(query: "financial_status:paid") {
-            count
-          }
           oldestOrders: orders(
             first: 5, 
             query: "financial_status:paid", 
@@ -115,6 +112,9 @@ export async function action({ request }: ActionFunctionArgs) {
                 }
               }
             }
+            pageInfo {
+              hasNextPage
+            }
           }
           newestOrders: orders(
             first: 5, 
@@ -130,6 +130,9 @@ export async function action({ request }: ActionFunctionArgs) {
                 displayFinancialStatus
               }
             }
+            pageInfo {
+              hasPreviousPage
+            }
           }
         }
       `;
@@ -139,12 +142,39 @@ export async function action({ request }: ActionFunctionArgs) {
       const response = await admin.graphql(allOrdersQuery);
       const responseData = await response.json();
       
+      // Additional query to estimate total orders by checking pagination
+      const estimateQuery = `
+        query EstimateOrderCount {
+          orders(first: 250, query: "financial_status:paid") {
+            edges {
+              node {
+                id
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+      `;
+      
+      const estimateResponse = await admin.graphql(estimateQuery);
+      const estimateData = await estimateResponse.json();
+      
       return json<ActionData>({
         success: true,
         testResult: {
           query: allOrdersQuery,
           variables: {},
-          response: responseData
+          response: {
+            ...responseData,
+            estimate: {
+              hasMoreThan250Orders: estimateData.data?.orders?.pageInfo?.hasNextPage || false,
+              message: estimateData.data?.orders?.pageInfo?.hasNextPage 
+                ? "You have more than 250 paid orders" 
+                : `You have approximately ${estimateData.data?.orders?.edges?.length || 0} paid orders`
+            }
+          }
         }
       });
       

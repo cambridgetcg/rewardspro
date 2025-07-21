@@ -93,26 +93,11 @@ async function processMigrationAsync(
     
     console.log('Starting migration with full historical access (read_all_orders scope)');
     
-    // First, get the total count of orders to process
-    const countQuery = `
-      query GetOrderCount {
-        ordersCount: orders(query: "${queryFilter}") {
-          count
-        }
-      }
-    `;
+    // Since we can't get a direct count, we'll track progress differently
+    console.log('Starting migration with full historical access (read_all_orders scope)');
+    console.log('Note: Total order count will be determined during processing');
     
-    const countResponse = await admin.graphql(countQuery);
-    const countData = await countResponse.json() as { data: { ordersCount: { count: number } } };
-    const totalOrders = countData.data?.ordersCount?.count || 0;
-    
-    console.log(`Found ${totalOrders} paid orders to process`);
-    
-    // Update total records
-    await prisma.migrationHistory.update({
-      where: { id: jobId },
-      data: { totalRecords: totalOrders }
-    });
+    // Remove the count query entirely since it's not supported
     
     // Optimized query - only fetch required fields for CashbackTransaction
     const ordersQuery = `
@@ -147,7 +132,7 @@ async function processMigrationAsync(
     // Process orders in batches
     while (hasNextPage) {
       try {
-        console.log(`Fetching batch: ${totalProcessed}/${totalOrders} processed`);
+                  console.log(`Processing batch: ${totalProcessed} orders processed so far`);
         
         const response = await admin.graphql(ordersQuery, {
           variables: {
@@ -280,7 +265,7 @@ async function processMigrationAsync(
       }
     });
     
-    console.log(`Migration completed: ${totalProcessed} processed, ${totalFailed} failed out of ${totalOrders} total orders`);
+    console.log(`Migration completed: ${totalProcessed} processed, ${totalFailed} failed`);
     
   } catch (error) {
     console.error('Migration error:', error);
