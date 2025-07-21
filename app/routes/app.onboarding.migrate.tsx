@@ -268,7 +268,7 @@ export default function TransactionMigration() {
     },
     infoBox: {
       backgroundColor: '#f0fdf4',
-      border: '1px solid '#bbf7d0',
+      border: '1px solid #bbf7d0',
       padding: '16px',
       borderRadius: '8px',
       marginBottom: '24px'
