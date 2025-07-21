@@ -4,16 +4,60 @@ import { useLoaderData, Form, useNavigation, useActionData, useSubmit } from "@r
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { useState, useEffect } from "react";
-import { migrateTransactions } from "../services/transaction-migration.server";
+import { migrateTransactions, getMigrationStatus } from "../services/transaction-migration.server";
+
+// Type definitions
+interface MigrationStatus {
+  id: string;
+  shopDomain: string;
+  status: string;
+  totalRecords: number;
+  processedRecords: number;
+  failedRecords: number;
+  errors: string[] | null;
+  metadata?: any;
+  startedAt: Date | string | null;
+  completedAt: Date | string | null;
+  createdAt: Date | string;
+}
+
+interface LoaderData {
+  shopDomain: string;
+  migrationStatus: MigrationStatus | null;
+  stats: {
+    transactionCount: number;
+    customerCount: number;
+  };
+}
+
+interface ActionData {
+  success?: boolean;
+  error?: string;
+  jobId?: string;
+  message?: string;
+  status?: MigrationStatus | null;
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   
-  // Check if migration has been done before
-  const migrationStatus = await prisma.migrationHistory.findFirst({
-    where: { shopDomain: session.shop },
-    orderBy: { createdAt: 'desc' }
-  });
+  // Get the latest migration status
+  const migrationStatusRaw = await getMigrationStatus(session.shop);
+  
+  // Transform the migration status to match our interface
+  const migrationStatus: MigrationStatus | null = migrationStatusRaw ? {
+    id: migrationStatusRaw.id,
+    shopDomain: migrationStatusRaw.shopDomain,
+    status: migrationStatusRaw.status,
+    totalRecords: migrationStatusRaw.totalRecords,
+    processedRecords: migrationStatusRaw.processedRecords,
+    failedRecords: migrationStatusRaw.failedRecords,
+    errors: migrationStatusRaw.errors as string[] | null,
+    metadata: migrationStatusRaw.metadata || undefined,
+    startedAt: migrationStatusRaw.startedAt,
+    completedAt: migrationStatusRaw.completedAt,
+    createdAt: migrationStatusRaw.createdAt
+  } : null;
   
   // Get existing transaction count
   const transactionCount = await prisma.cashbackTransaction.count({
@@ -25,7 +69,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     where: { shopDomain: session.shop }
   });
   
-  return json({
+  return json<LoaderData>({
     shopDomain: session.shop,
     migrationStatus,
     stats: {
@@ -42,10 +86,26 @@ export async function action({ request }: ActionFunctionArgs) {
   
   if (action === 'check-status') {
     const jobId = formData.get('jobId') as string;
-    const status = await prisma.migrationHistory.findUnique({
+    const statusRaw = await prisma.migrationHistory.findUnique({
       where: { id: jobId }
     });
-    return json({ status });
+    
+    // Transform the status to match our interface
+    const status: MigrationStatus | null = statusRaw ? {
+      id: statusRaw.id,
+      shopDomain: statusRaw.shopDomain,
+      status: statusRaw.status,
+      totalRecords: statusRaw.totalRecords,
+      processedRecords: statusRaw.processedRecords,
+      failedRecords: statusRaw.failedRecords,
+      errors: statusRaw.errors as string[] | null,
+      metadata: statusRaw.metadata || undefined,
+      startedAt: statusRaw.startedAt,
+      completedAt: statusRaw.completedAt,
+      createdAt: statusRaw.createdAt
+    } : null;
+    
+    return json<ActionData>({ status });
   }
   
   if (action === 'start-migration') {
@@ -59,23 +119,24 @@ export async function action({ request }: ActionFunctionArgs) {
       });
       
       if (runningMigration) {
-        return json({ 
+        return json<ActionData>({ 
           success: false, 
           error: 'A migration is already in progress' 
         }, { status: 400 });
       }
       
-      // Start the migration
+      // Start the migration with date range
+      const startDate = formData.get('startDate') as string;
       const migrationJob = await migrateTransactions({
         shopDomain: session.shop,
         admin,
         options: {
-          startDate: formData.get('startDate') as string,
+          startDate,
           batchSize: 250
         }
       });
       
-      return json({ 
+      return json<ActionData>({ 
         success: true, 
         jobId: migrationJob.id,
         message: 'Migration started successfully' 
@@ -83,25 +144,25 @@ export async function action({ request }: ActionFunctionArgs) {
       
     } catch (error) {
       console.error('Migration error:', error);
-      return json({ 
+      return json<ActionData>({ 
         success: false, 
         error: error instanceof Error ? error.message : 'Migration failed' 
       }, { status: 500 });
     }
   }
   
-  return json({ success: false, error: 'Invalid action' }, { status: 400 });
+  return json<ActionData>({ success: false, error: 'Invalid action' }, { status: 400 });
 }
 
 export default function TransactionMigration() {
-  const { shopDomain, migrationStatus, stats } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
+  const { shopDomain, migrationStatus, stats } = useLoaderData<LoaderData>();
+  const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
   const submit = useSubmit();
   
   const [dateRange, setDateRange] = useState('12');
   const [isPolling, setIsPolling] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState(migrationStatus);
+  const [currentStatus, setCurrentStatus] = useState<MigrationStatus | null>(migrationStatus);
   
   const isSubmitting = navigation.state === 'submitting';
   
@@ -113,7 +174,7 @@ export default function TransactionMigration() {
       const interval = setInterval(() => {
         const formData = new FormData();
         formData.append('_action', 'check-status');
-        formData.append('jobId', actionData?.jobId || currentStatus?.id);
+        formData.append('jobId', actionData?.jobId || currentStatus?.id || '');
         submit(formData, { method: 'post', replace: true });
       }, 3000); // Poll every 3 seconds
       
@@ -129,6 +190,13 @@ export default function TransactionMigration() {
       setCurrentStatus(actionData.status);
     }
   }, [actionData]);
+  
+  // Update initial migration status
+  useEffect(() => {
+    if (migrationStatus) {
+      setCurrentStatus(migrationStatus);
+    }
+  }, [migrationStatus]);
   
   const getStartDate = () => {
     const months = parseInt(dateRange);
@@ -370,7 +438,7 @@ export default function TransactionMigration() {
           
           {currentStatus.status === 'FAILED' && currentStatus.errors && (
             <div style={{ marginTop: '12px', fontSize: '14px' }}>
-              Error: {currentStatus.errors[0]}
+              Error: {Array.isArray(currentStatus.errors) ? currentStatus.errors[0] : 'Unknown error'}
             </div>
           )}
         </div>
@@ -387,8 +455,9 @@ export default function TransactionMigration() {
           <strong>What will be imported:</strong>
           <ul style={styles.list}>
             <li>Customer information (email, Shopify ID)</li>
-            <li>Order history with amounts and dates</li>
-            <li>Order financial status for accurate calculations</li>
+            <li>Order history (paid orders only)</li>
+            <li>Order amounts and dates for cashback calculation</li>
+            <li>Financial status to ensure accurate records</li>
           </ul>
         </div>
         
@@ -421,7 +490,9 @@ export default function TransactionMigration() {
             <ul style={{ ...styles.list, margin: '8px 0 0 20px' }}>
               <li>This process may take several minutes depending on order volume</li>
               <li>Only completed/paid orders will be imported</li>
+              <li>Orders without customer information will be skipped</li>
               <li>You can safely close this page - the import will continue in the background</li>
+              <li>Note: Shopify only provides access to orders from the last 60 days by default</li>
             </ul>
           </div>
           

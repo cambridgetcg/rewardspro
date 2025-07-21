@@ -1,11 +1,43 @@
 // app/services/transaction-migration.server.ts
 import prisma from "../db.server";
-import { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { TransactionStatus } from "@prisma/client";
+
+// Type definitions for Shopify GraphQL responses
+interface ShopifyOrder {
+  id: string;
+  createdAt: string;
+  totalPriceSet: {
+    shopMoney: {
+      amount: string;
+      currencyCode: string;
+    };
+  };
+  financialStatus: string;
+  customer: {
+    id: string;
+    email: string;
+  } | null;
+}
+
+interface OrderEdge {
+  node: ShopifyOrder;
+  cursor: string;
+}
+
+interface OrdersQueryResponse {
+  data: {
+    orders: {
+      edges: OrderEdge[];
+      pageInfo: {
+        hasNextPage: boolean;
+      };
+    };
+  };
+}
 
 interface MigrationOptions {
   shopDomain: string;
-  admin: AdminApiContext;
+  admin: any; // Using 'any' to avoid specific AdminApiContext typing issues
   options: {
     startDate?: string;
     batchSize?: number;
@@ -34,7 +66,7 @@ export async function migrateTransactions({ shopDomain, admin, options }: Migrat
 async function processMigrationAsync(
   jobId: string,
   shopDomain: string,
-  admin: AdminApiContext,
+  admin: any,
   options: { startDate?: string; batchSize?: number }
 ) {
   try {
@@ -52,96 +84,58 @@ async function processMigrationAsync(
     let cursor: string | null = null;
     let totalProcessed = 0;
     let totalFailed = 0;
-    let totalOrders = 0;
     const errors: string[] = [];
     
-    // Build date filter
+    // Build date filter for query
     const dateFilter = options.startDate 
-      ? `created_at:>='${options.startDate}'` 
+      ? `created_at:>='${options.startDate}T00:00:00Z'` 
       : '';
     
-    // First, get total count for progress tracking
-    const countQuery = `
-      query GetOrderCount {
-        ordersCount {
-          count
+    // Build the complete query filter
+    const queryFilter = dateFilter 
+      ? `${dateFilter} AND financial_status:paid`
+      : 'financial_status:paid';
+    
+    // Optimized query - only fetch required fields for CashbackTransaction
+    const ordersQuery = `
+      query GetOrders($cursor: String, $query: String) {
+        orders(first: ${batchSize}, after: $cursor, query: $query) {
+          edges {
+            node {
+              id
+              createdAt
+              totalPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              financialStatus
+              customer {
+                id
+                email
+              }
+            }
+            cursor
+          }
+          pageInfo {
+            hasNextPage
+          }
         }
       }
     `;
     
-    const countResponse = await admin.graphql(countQuery);
-    const countData = await countResponse.json();
-    totalOrders = countData.data?.ordersCount?.count || 0;
-    
-    // Update job with total count
-    await prisma.migrationHistory.update({
-      where: { id: jobId },
-      data: { totalRecords: totalOrders }
-    });
-    
     // Process orders in batches
     while (hasNextPage) {
-      const ordersQuery = `
-        query GetOrders($cursor: String, $query: String) {
-          orders(first: ${batchSize}, after: $cursor, query: $query) {
-            edges {
-              node {
-                id
-                name
-                email
-                createdAt
-                totalPriceSet {
-                  shopMoney {
-                    amount
-                    currencyCode
-                  }
-                }
-                currentTotalPriceSet {
-                  shopMoney {
-                    amount
-                    currencyCode
-                  }
-                }
-                financialStatus
-                fulfillmentStatus
-                customer {
-                  id
-                  email
-                  firstName
-                  lastName
-                  totalSpent
-                }
-                lineItems(first: 250) {
-                  edges {
-                    node {
-                      id
-                      title
-                      quantity
-                      variant {
-                        price
-                      }
-                    }
-                  }
-                }
-              }
-              cursor
-            }
-            pageInfo {
-              hasNextPage
-            }
-          }
-        }
-      `;
-      
       try {
         const response = await admin.graphql(ordersQuery, {
           variables: {
             cursor,
-            query: `${dateFilter} financial_status:paid`
+            query: queryFilter
           }
         });
         
-        const data = await response.json();
+        const data = await response.json() as OrdersQueryResponse;
         
         if (!data.data?.orders) {
           throw new Error('Failed to fetch orders from Shopify');
@@ -153,74 +147,85 @@ async function processMigrationAsync(
         if (orders.length > 0) {
           cursor = orders[orders.length - 1].cursor;
           
-          // Process each order
-          for (const edge of orders) {
+          // Batch process orders for better performance
+          const orderPromises = orders.map(async (edge: OrderEdge) => {
             const order = edge.node;
             
             try {
-              // Skip if no customer
-              if (!order.customer) {
-                console.log(`Skipping order ${order.name} - no customer associated`);
-                continue;
+              // Skip orders without customers or with invalid financial status
+              if (!order.customer || order.financialStatus !== 'PAID') {
+                return { success: false, error: 'No customer or unpaid order' };
               }
               
-              const customerId = order.customer.id.split('/').pop()!;
+              // Extract only required data
+              const shopifyOrderId = order.id.split('/').pop()!;
+              const shopifyCustomerId = order.customer.id.split('/').pop()!;
               const orderAmount = parseFloat(order.totalPriceSet.shopMoney.amount);
+              const customerEmail = order.customer.email;
               
-              // Create or update customer
+              // Create or get customer (minimal data)
               const customer = await prisma.customer.upsert({
                 where: {
                   shopDomain_shopifyCustomerId: {
                     shopDomain,
-                    shopifyCustomerId: customerId
+                    shopifyCustomerId
                   }
                 },
-                update: {
-                  email: order.customer.email
-                },
+                update: {}, // No update needed if exists
                 create: {
                   shopDomain,
-                  shopifyCustomerId: customerId,
-                  email: order.customer.email
+                  shopifyCustomerId,
+                  email: customerEmail
                 }
               });
               
-              // Check if transaction already exists
-              const existingTransaction = await prisma.cashbackTransaction.findUnique({
+              // Create transaction if doesn't exist
+              await prisma.cashbackTransaction.upsert({
                 where: {
                   shopDomain_shopifyOrderId: {
                     shopDomain,
-                    shopifyOrderId: order.id.split('/').pop()!
+                    shopifyOrderId
                   }
+                },
+                update: {}, // No update if exists
+                create: {
+                  shopDomain,
+                  customerId: customer.id,
+                  shopifyOrderId,
+                  orderAmount,
+                  cashbackAmount: 0, // Will be calculated during tier assignment
+                  cashbackPercent: 0, // Will be set during tier assignment
+                  status: TransactionStatus.COMPLETED,
+                  createdAt: new Date(order.createdAt)
                 }
               });
               
-              if (!existingTransaction) {
-                // Create transaction record
-                // Note: We're not calculating cashback yet - that will be done separately
-                await prisma.cashbackTransaction.create({
-                  data: {
-                    shopDomain,
-                    customerId: customer.id,
-                    shopifyOrderId: order.id.split('/').pop()!,
-                    orderAmount,
-                    cashbackAmount: 0, // Will be calculated during tier assignment
-                    cashbackPercent: 0, // Will be set during tier assignment
-                    status: TransactionStatus.COMPLETED,
-                    createdAt: new Date(order.createdAt)
-                  }
-                });
-              }
-              
-              totalProcessed++;
+              return { success: true };
             } catch (error) {
-              totalFailed++;
-              errors.push(`Order ${order.name}: ${error.message}`);
-              console.error(`Error processing order ${order.name}:`, error);
+              const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+              return { 
+                success: false, 
+                error: `Order ${order.id}: ${errorMessage}` 
+              };
             }
-          }
+          });
           
-          // Update progress
+          // Wait for batch to complete
+          const results = await Promise.all(orderPromises);
+          
+          // Count successes and failures
+          results.forEach(result => {
+            if (result.success) {
+              totalProcessed++;
+            } else {
+              totalFailed++;
+              if (result.error && result.error !== 'No customer') {
+                errors.push(result.error);
+              }
+            }
+          });
+          
+          // Update progress periodically (every batch)
           await prisma.migrationHistory.update({
             where: { id: jobId },
             data: {
@@ -231,7 +236,8 @@ async function processMigrationAsync(
         }
       } catch (error) {
         console.error('Batch processing error:', error);
-        errors.push(`Batch error: ${error.message}`);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        errors.push(`Batch error: ${errorMessage}`);
         // Continue with next batch despite error
       }
     }
@@ -242,9 +248,10 @@ async function processMigrationAsync(
       data: {
         status: 'COMPLETED',
         completedAt: new Date(),
+        totalRecords: totalProcessed + totalFailed,
         processedRecords: totalProcessed,
         failedRecords: totalFailed,
-        errors: errors.length > 0 ? errors.slice(0, 100) : null // Limit error storage
+        errors: errors.length > 0 ? errors.slice(0, 100) : undefined // Limit error storage
       }
     });
     
@@ -252,14 +259,46 @@ async function processMigrationAsync(
     
   } catch (error) {
     console.error('Migration error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     await prisma.migrationHistory.update({
       where: { id: jobId },
       data: {
         status: 'FAILED',
         completedAt: new Date(),
-        errors: [error.message]
+        errors: [errorMessage]
       }
     });
   }
+}
+
+// Helper function to get migration status
+export async function getMigrationStatus(shopDomain: string) {
+  return await prisma.migrationHistory.findFirst({
+    where: { shopDomain },
+    orderBy: { createdAt: 'desc' }
+  });
+}
+
+// Helper function to cancel a running migration
+export async function cancelMigration(jobId: string, shopDomain: string) {
+  const job = await prisma.migrationHistory.findFirst({
+    where: {
+      id: jobId,
+      shopDomain,
+      status: { in: ['PENDING', 'PROCESSING'] }
+    }
+  });
+  
+  if (job) {
+    return await prisma.migrationHistory.update({
+      where: { id: jobId },
+      data: {
+        status: 'CANCELLED',
+        completedAt: new Date()
+      }
+    });
+  }
+  
+  return null;
 }
