@@ -1,117 +1,108 @@
+// app/routes/app.tsx
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Link, Outlet, useLoaderData, useRouteError, useNavigation } from "@remix-run/react";
+import { Link, Outlet, useLoaderData, useRouteError, useLocation } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  // Authenticate once for all child routes
   const { session } = await authenticate.admin(request);
+  
+  // Check if merchant has completed initial migration
+  const hasMigrated = await prisma.migrationHistory.findFirst({
+    where: { 
+      shopDomain: session.shop,
+      status: 'COMPLETED'
+    }
+  });
   
   return json({
     apiKey: process.env.SHOPIFY_API_KEY || "",
-    shop: session.shop,
+    hasMigrated: !!hasMigrated
   });
 };
 
-// Loading overlay component
-function LoadingOverlay() {
-  const navigation = useNavigation();
-  
-  if (navigation.state !== "loading") return null;
-  
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: "rgba(255, 255, 255, 0.8)",
-        zIndex: 1000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        pointerEvents: "none",
-      }}
-    >
-      <div style={{ textAlign: "center" }}>
-        <div
-          style={{
-            width: "40px",
-            height: "40px",
-            border: "3px solid #f3f3f3",
-            borderTop: "3px solid #4F46E5",
-            borderRadius: "50%",
-            animation: "spin 1s linear infinite",
-            margin: "0 auto 16px",
-          }}
-        />
-        <style>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}</style>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
-  const navigation = useNavigation();
+  const { apiKey, hasMigrated } = useLoaderData<typeof loader>();
+  const location = useLocation();
+  
+  // Show migration prompt if not completed and not on migration page
+  const showMigrationPrompt = !hasMigrated && !location.pathname.includes('migrate');
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
       <NavMenu>
-        <Link to="/app" rel="home" prefetch="intent">
+        <Link to="/app" rel="home">
           Home
         </Link>
-        <Link to="/app/dashboard" prefetch="intent">
+        {!hasMigrated && (
+          <Link to="/app/onboarding/migrate" style={{ color: '#10b981' }}>
+            📥 Import Data
+          </Link>
+        )}
+        <Link to="/app/dashboard">
           Dashboard
         </Link>
-        <Link to="/app/customers/credit" prefetch="intent">
+        <Link to="/app/customers/credit">
           Credits
         </Link>
-        <Link to="/app/tiers" prefetch="intent">
+        <Link to="/app/tiers">
           Tiers
         </Link>
-        <Link to="/app/customers/tiers" prefetch="intent">
+        <Link to="/app/customers/tiers">
           Customers
         </Link>
       </NavMenu>
       
-      {/* Loading overlay for better UX */}
-      <LoadingOverlay />
+      {showMigrationPrompt && (
+        <div style={{
+          backgroundColor: '#fef3c7',
+          border: '1px solid #fde68a',
+          padding: '16px',
+          margin: '16px',
+          borderRadius: '8px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          <div>
+            <strong>👋 Welcome!</strong> Import your transaction history to start using cashback features.
+          </div>
+          <Link 
+            to="/app/onboarding/migrate"
+            style={{
+              backgroundColor: '#10b981',
+              color: 'white',
+              padding: '8px 16px',
+              borderRadius: '6px',
+              textDecoration: 'none',
+              fontSize: '14px',
+              fontWeight: '500'
+            }}
+          >
+            Import Now
+          </Link>
+        </div>
+      )}
       
-      {/* Main content with fade effect during navigation */}
-      <div
-        style={{
-          opacity: navigation.state === "loading" ? 0.6 : 1,
-          transition: "opacity 150ms ease-in-out",
-          minHeight: "100vh",
-        }}
-      >
-        <Outlet />
-      </div>
+      <Outlet />
     </AppProvider>
   );
 }
 
 // Shopify needs Remix to catch some thrown responses, so that their headers are included in the response.
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  const error = useRouteError();
+  console.error("App ErrorBoundary - Error:", error);
+  return boundary.error(error);
 }
 
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
-
-  

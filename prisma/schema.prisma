@@ -1,131 +1,14 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
-  
-  @@index([shop])
-  @@index([expires])
-}
-
-model Customer {
-  id                String      @id @default(uuid())
-  shopDomain        String      
-  shopifyCustomerId String      
-  email             String
-  storeCredit       Float       @default(0)
-  totalEarned       Float       @default(0)
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  
-  transactions      CashbackTransaction[]
-  membershipHistory CustomerMembership[]
-  
-  @@unique([shopDomain, shopifyCustomerId])
-  @@index([shopDomain])
-  @@index([email])
-}
-
-model CashbackTransaction {
-  id                    String      @id @default(uuid())
-  shopDomain            String      
-  customerId            String
-  shopifyOrderId        String      
-  orderAmount           Float
-  cashbackAmount        Float
-  cashbackPercent       Float
-  status                TransactionStatus @default(COMPLETED)
-  shopifyTransactionId  String?     
-  createdAt             DateTime    @default(now())
-  
-  customer              Customer    @relation(fields: [customerId], references: [id])
-  
-  @@unique([shopDomain, shopifyOrderId])
-  @@index([shopDomain])
-  @@index([customerId])
-  @@index([createdAt])
-}
-
-model Tier {
-  id                String              @id @default(uuid())
-  shopDomain        String      
-  name              String      
-  minSpend          Float?      
-  cashbackPercent   Float       
-  evaluationPeriod  EvaluationPeriod    @default(ANNUAL)
-  isActive          Boolean             @default(true)
-  createdAt         DateTime            @default(now())
-  
-  customerMemberships CustomerMembership[]
-  
-  @@unique([shopDomain, name])
-  @@index([shopDomain])
-  @@index([cashbackPercent])
-}
-
-model CustomerMembership {
-  id                String      @id @default(uuid())
-  customerId        String
-  tierId            String
-  startDate         DateTime    @default(now())
-  isActive          Boolean     @default(true)
-  createdAt         DateTime    @default(now())
-  
-  customer          Customer    @relation(fields: [customerId], references: [id])
-  tier              Tier        @relation(fields: [tierId], references: [id])
-  
-  @@unique([customerId, isActive])
-  @@index([customerId])
-  @@index([tierId])
-}
-
-model Onboarding {
-  id                String      @id @default(uuid())
-  shopDomain        String      @unique
-  businessName      String
-  employeeCount     String
-  country           String
-  currency          String
-  contactEmail      String
-  productTypes      String[]
-  goals             String[]
-  completedAt       DateTime    @default(now())
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  
-  @@index([shopDomain])
-  @@index([completedAt])
-}
+// Add this to your schema.prisma file
 
 model MigrationHistory {
   id                String      @id @default(uuid())
   shopDomain        String
-  status            MigrationStatus @default(PENDING)
+  status            String      // 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED'
   totalRecords      Int         @default(0)
   processedRecords  Int         @default(0)
   failedRecords     Int         @default(0)
   errors            Json?       // Array of error messages
-  metadata          Json?       // Migration configuration (e.g., date range, batch size)
+  metadata          Json?       // Migration configuration
   startedAt         DateTime?
   completedAt       DateTime?
   createdAt         DateTime    @default(now())
@@ -135,21 +18,25 @@ model MigrationHistory {
   @@index([createdAt])
 }
 
-enum TransactionStatus {
-  COMPLETED
-  SYNCED_TO_SHOPIFY
-  SHOPIFY_SYNC_FAILED
-}
+// SQL Migration
+/*
+CREATE TABLE "MigrationHistory" (
+    "id" TEXT NOT NULL DEFAULT gen_random_uuid(),
+    "shopDomain" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "totalRecords" INTEGER NOT NULL DEFAULT 0,
+    "processedRecords" INTEGER NOT NULL DEFAULT 0,
+    "failedRecords" INTEGER NOT NULL DEFAULT 0,
+    "errors" JSONB,
+    "metadata" JSONB,
+    "startedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-enum EvaluationPeriod {
-  ANNUAL         // 12 months rolling (default)
-  LIFETIME       // All-time spending, never expires
-}
+    CONSTRAINT "MigrationHistory_pkey" PRIMARY KEY ("id")
+);
 
-enum MigrationStatus {
-  PENDING
-  PROCESSING
-  COMPLETED
-  FAILED
-  CANCELLED
-}
+CREATE INDEX "MigrationHistory_shopDomain_idx" ON "MigrationHistory"("shopDomain");
+CREATE INDEX "MigrationHistory_status_idx" ON "MigrationHistory"("status");
+CREATE INDEX "MigrationHistory_createdAt_idx" ON "MigrationHistory"("createdAt");
+*/
