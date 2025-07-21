@@ -15,7 +15,7 @@ interface TestOrder {
       currencyCode: string;
     };
   };
-  financialStatus: string;
+  displayFinancialStatus: string;
   customer: {
     id: string;
     email: string;
@@ -102,7 +102,7 @@ export async function action({ request }: ActionFunctionArgs) {
                     currencyCode
                   }
                 }
-                financialStatus
+                displayFinancialStatus
                 customer {
                   id
                   email
@@ -226,7 +226,7 @@ export async function action({ request }: ActionFunctionArgs) {
                     currencyCode
                   }
                 }
-                financialStatus
+                displayFinancialStatus
                 customer {
                   id
                   email

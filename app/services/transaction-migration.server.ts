@@ -12,7 +12,7 @@ interface ShopifyOrder {
       currencyCode: string;
     };
   };
-  financialStatus: string;
+  displayFinancialStatus: string;
   customer: {
     id: string;
     email: string;
@@ -110,7 +110,7 @@ async function processMigrationAsync(
                   currencyCode
                 }
               }
-              financialStatus
+              displayFinancialStatus
               customer {
                 id
                 email
@@ -153,7 +153,7 @@ async function processMigrationAsync(
             
             try {
               // Skip orders without customers or with invalid financial status
-              if (!order.customer || order.financialStatus !== 'PAID') {
+              if (!order.customer || order.displayFinancialStatus !== 'PAID') {
                 return { success: false, error: 'No customer or unpaid order' };
               }
               
