@@ -85,6 +85,153 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const action = formData.get('_action') as string;
   
+  if (action === 'test-all-orders') {
+    try {
+      // Test fetching ALL orders without date restrictions
+      const allOrdersQuery = `
+        query GetAllOrdersTest {
+          ordersCount: orders(query: "financial_status:paid") {
+            count
+          }
+          oldestOrders: orders(
+            first: 5, 
+            query: "financial_status:paid", 
+            sortKey: CREATED_AT, 
+            reverse: false
+          ) {
+            edges {
+              node {
+                id
+                name
+                createdAt
+                displayFinancialStatus
+                totalPriceSet {
+                  shopMoney {
+                    amount
+                  }
+                }
+                customer {
+                  email
+                }
+              }
+            }
+          }
+          newestOrders: orders(
+            first: 5, 
+            query: "financial_status:paid", 
+            sortKey: CREATED_AT, 
+            reverse: true
+          ) {
+            edges {
+              node {
+                id
+                name
+                createdAt
+                displayFinancialStatus
+              }
+            }
+          }
+        }
+      `;
+      
+      console.log('Testing full order access with read_all_orders scope...');
+      
+      const response = await admin.graphql(allOrdersQuery);
+      const responseData = await response.json();
+      
+      return json<ActionData>({
+        success: true,
+        testResult: {
+          query: allOrdersQuery,
+          variables: {},
+          response: responseData
+        }
+      });
+      
+    } catch (error) {
+      console.error('All orders test error:', error);
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+  
+  if (action === 'check-access') {
+    try {
+      // Test query to check order access and get the oldest available order
+      const accessCheckQuery = `
+        query CheckOrderAccess {
+          shop {
+            name
+            email
+          }
+          orders(first: 1, sortKey: CREATED_AT, reverse: false) {
+            edges {
+              node {
+                id
+                name
+                createdAt
+                displayFinancialStatus
+              }
+            }
+          }
+          ordersCount: orders(first: 1) {
+            count
+          }
+          app: currentAppInstallation {
+            id
+            accessScopes {
+              handle
+            }
+          }
+        }
+      `;
+      
+      console.log('Checking order access...');
+      
+      const response = await admin.graphql(accessCheckQuery);
+      const responseData = await response.json();
+      
+      // Also try to get orders from a specific old date
+      const oldDateQuery = `
+        query GetOldOrders {
+          orders(first: 5, query: "created_at:<'2023-01-01'", sortKey: CREATED_AT, reverse: false) {
+            edges {
+              node {
+                id
+                name
+                createdAt
+              }
+            }
+          }
+        }
+      `;
+      
+      const oldOrdersResponse = await admin.graphql(oldDateQuery);
+      const oldOrdersData = await oldOrdersResponse.json();
+      
+      return json<ActionData>({
+        success: true,
+        testResult: {
+          query: accessCheckQuery,
+          variables: {},
+          response: {
+            accessCheck: responseData,
+            oldOrdersCheck: oldOrdersData
+          }
+        }
+      });
+      
+    } catch (error) {
+      console.error('Access check error:', error);
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+  
   if (action === 'test-oldest') {
     try {
       // Query to get the oldest order
@@ -423,6 +570,51 @@ export default function ImportTest() {
         )}
       </div>
       
+      {/* Test All Orders Access */}
+      <div style={styles.testSection}>
+        <h2 style={styles.sectionTitle}>🎉 Test Full Historical Access (read_all_orders)</h2>
+        <div style={styles.infoBox}>
+          You have the <strong>read_all_orders</strong> scope! This test will fetch ALL historical orders
+          without any date restrictions and show the oldest and newest orders.
+        </div>
+        <Form method="post">
+          <input type="hidden" name="_action" value="test-all-orders" />
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            style={{
+              ...styles.button,
+              backgroundColor: '#10b981',
+              ...(isSubmitting ? styles.buttonDisabled : {})
+            }}
+          >
+            {isSubmitting ? 'Testing...' : 'Test Full Historical Access'}
+          </button>
+        </Form>
+      </div>
+      
+      {/* Check Access Test */}
+      <div style={styles.testSection}>
+        <h2 style={styles.sectionTitle}>Test 0: Check Order Access & Scopes</h2>
+        <div style={styles.infoBox}>
+          This test will check what order access your app has and display the available scopes.
+          It will also attempt to fetch orders older than 2023.
+        </div>
+        <Form method="post">
+          <input type="hidden" name="_action" value="check-access" />
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            style={{
+              ...styles.button,
+              ...(isSubmitting ? styles.buttonDisabled : {})
+            }}
+          >
+            {isSubmitting ? 'Checking...' : 'Check Access & Scopes'}
+          </button>
+        </Form>
+      </div>
+      
       {/* Test Oldest Order */}
       <div style={styles.testSection}>
         <h2 style={styles.sectionTitle}>Test 1: Import Oldest Order</h2>
@@ -572,6 +764,17 @@ export default function ImportTest() {
           <li><strong>Empty customer field:</strong> Guest checkouts or deleted customers</li>
           <li><strong>Date filtering not working:</strong> Check date format and timezone</li>
           <li><strong>Financial status mismatch:</strong> Only 'PAID' orders are imported</li>
+          <li><strong>60-day limitation:</strong> Standard API access only provides last 60 days of orders</li>
+        </ul>
+        
+        <h3 style={{ marginTop: '16px', marginBottom: '8px', fontWeight: '600' }}>
+          Solutions for Historical Data:
+        </h3>
+        <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+          <li><strong>Request read_all_orders scope:</strong> Gives access to all historical orders</li>
+          <li><strong>Export/Import CSV:</strong> Merchants can export orders and you can import the CSV</li>
+          <li><strong>Webhooks going forward:</strong> Set up webhooks to capture all future orders</li>
+          <li><strong>Partner API request:</strong> Contact Shopify for extended access if needed for your use case</li>
         </ul>
       </div>
     </div>

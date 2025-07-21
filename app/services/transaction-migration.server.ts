@@ -30,6 +30,7 @@ interface OrdersQueryResponse {
       edges: OrderEdge[];
       pageInfo: {
         hasNextPage: boolean;
+        endCursor: string | null;
       };
     };
   };
@@ -86,15 +87,32 @@ async function processMigrationAsync(
     let totalFailed = 0;
     const errors: string[] = [];
     
-    // Build date filter for query
-    const dateFilter = options.startDate 
-      ? `created_at:>='${options.startDate}T00:00:00Z'` 
-      : '';
+    // Since you have read_all_orders, no date filtering needed!
+    // Just get all paid orders
+    const queryFilter = 'financial_status:paid';
     
-    // Build the complete query filter
-    const queryFilter = dateFilter 
-      ? `${dateFilter} AND financial_status:paid`
-      : 'financial_status:paid';
+    console.log('Starting migration with full historical access (read_all_orders scope)');
+    
+    // First, get the total count of orders to process
+    const countQuery = `
+      query GetOrderCount {
+        ordersCount: orders(query: "${queryFilter}") {
+          count
+        }
+      }
+    `;
+    
+    const countResponse = await admin.graphql(countQuery);
+    const countData = await countResponse.json() as { data: { ordersCount: { count: number } } };
+    const totalOrders = countData.data?.ordersCount?.count || 0;
+    
+    console.log(`Found ${totalOrders} paid orders to process`);
+    
+    // Update total records
+    await prisma.migrationHistory.update({
+      where: { id: jobId },
+      data: { totalRecords: totalOrders }
+    });
     
     // Optimized query - only fetch required fields for CashbackTransaction
     const ordersQuery = `
@@ -120,6 +138,7 @@ async function processMigrationAsync(
           }
           pageInfo {
             hasNextPage
+            endCursor
           }
         }
       }
@@ -128,6 +147,8 @@ async function processMigrationAsync(
     // Process orders in batches
     while (hasNextPage) {
       try {
+        console.log(`Fetching batch: ${totalProcessed}/${totalOrders} processed`);
+        
         const response = await admin.graphql(ordersQuery, {
           variables: {
             cursor,
@@ -143,10 +164,9 @@ async function processMigrationAsync(
         
         const orders = data.data.orders.edges;
         hasNextPage = data.data.orders.pageInfo.hasNextPage;
+        cursor = data.data.orders.pageInfo.endCursor;
         
         if (orders.length > 0) {
-          cursor = orders[orders.length - 1].cursor;
-          
           // Batch process orders for better performance
           const orderPromises = orders.map(async (edge: OrderEdge) => {
             const order = edge.node;
@@ -219,7 +239,7 @@ async function processMigrationAsync(
               totalProcessed++;
             } else {
               totalFailed++;
-              if (result.error && result.error !== 'No customer') {
+              if (result.error && result.error !== 'No customer or unpaid order') {
                 errors.push(result.error);
               }
             }
@@ -233,6 +253,11 @@ async function processMigrationAsync(
               failedRecords: totalFailed
             }
           });
+          
+          // Add a small delay to avoid rate limiting
+          if (hasNextPage) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
         }
       } catch (error) {
         console.error('Batch processing error:', error);
@@ -255,7 +280,7 @@ async function processMigrationAsync(
       }
     });
     
-    console.log(`Migration completed: ${totalProcessed} processed, ${totalFailed} failed`);
+    console.log(`Migration completed: ${totalProcessed} processed, ${totalFailed} failed out of ${totalOrders} total orders`);
     
   } catch (error) {
     console.error('Migration error:', error);
