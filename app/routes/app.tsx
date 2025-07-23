@@ -42,7 +42,7 @@ export default function App() {
           Home
         </Link>
         {!hasMigrated && (
-          <Link to="/app/import-test" style={{ color: '#10b981' }}>
+          <Link to="/app/import/orders" style={{ color: '#10b981' }}>
             📥 Import Data
           </Link>
         )}
