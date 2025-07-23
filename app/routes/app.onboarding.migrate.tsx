@@ -1,80 +1,104 @@
-// app/routes/app.onboarding.migrate.tsx
+// app/routes/app.import-orders.tsx
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Form, useNavigation, useActionData, useSubmit } from "@remix-run/react";
+import { useLoaderData, Form, useNavigation, useActionData, useSubmit, useFetcher } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
-import { useState, useEffect } from "react";
 import { migrateTransactions, getMigrationStatus } from "../services/transaction-migration.server";
-
-// Type definitions
-interface MigrationStatus {
-  id: string;
-  shopDomain: string;
-  status: string;
-  totalRecords: number;
-  processedRecords: number;
-  failedRecords: number;
-  errors: string[] | null;
-  metadata?: any;
-  startedAt: Date | string | null;
-  completedAt: Date | string | null;
-  createdAt: Date | string;
-}
+import prisma from "../db.server";
+import { useEffect, useState } from "react";
 
 interface LoaderData {
   shopDomain: string;
-  migrationStatus: MigrationStatus | null;
+  hasReadAllOrders: boolean;
+  currentImport: {
+    id: string;
+    status: string;
+    totalRecords: number;
+    processedRecords: number;
+    failedRecords: number;
+    startedAt: string | null;
+    completedAt: string | null;
+    errors: string[] | null;
+  } | null;
   stats: {
-    transactionCount: number;
-    customerCount: number;
+    existingTransactions: number;
+    existingCustomers: number;
+    oldestTransaction: string | null;
+    newestTransaction: string | null;
   };
 }
 
 interface ActionData {
   success?: boolean;
   error?: string;
-  jobId?: string;
-  message?: string;
-  status?: MigrationStatus | null;
+  migrationJob?: {
+    id: string;
+    status: string;
+  };
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   
-  // Get the latest migration status
-  const migrationStatusRaw = await getMigrationStatus(session.shop);
+  // Check if we have read_all_orders scope
+  let hasReadAllOrders = false;
+  try {
+    const scopeCheckQuery = `
+      query CheckScopes {
+        app: currentAppInstallation {
+          accessScopes {
+            handle
+          }
+        }
+      }
+    `;
+    
+    const response = await admin.graphql(scopeCheckQuery);
+    const data = await response.json();
+    
+    hasReadAllOrders = data.data?.app?.accessScopes?.some(
+      (scope: any) => scope.handle === 'read_all_orders'
+    ) || false;
+  } catch (error) {
+    console.error('Error checking scopes:', error);
+  }
   
-  // Transform the migration status to match our interface
-  const migrationStatus: MigrationStatus | null = migrationStatusRaw ? {
-    id: migrationStatusRaw.id,
-    shopDomain: migrationStatusRaw.shopDomain,
-    status: migrationStatusRaw.status,
-    totalRecords: migrationStatusRaw.totalRecords,
-    processedRecords: migrationStatusRaw.processedRecords,
-    failedRecords: migrationStatusRaw.failedRecords,
-    errors: migrationStatusRaw.errors as string[] | null,
-    metadata: migrationStatusRaw.metadata || undefined,
-    startedAt: migrationStatusRaw.startedAt,
-    completedAt: migrationStatusRaw.completedAt,
-    createdAt: migrationStatusRaw.createdAt
-  } : null;
+  // Get current migration status
+  const currentImport = await getMigrationStatus(session.shop);
   
-  // Get existing transaction count
-  const transactionCount = await prisma.cashbackTransaction.count({
-    where: { shopDomain: session.shop }
-  });
-  
-  // Get customer count
-  const customerCount = await prisma.customer.count({
-    where: { shopDomain: session.shop }
-  });
+  // Get existing data stats
+  const [transactionCount, customerCount, oldestTransaction, newestTransaction] = await Promise.all([
+    prisma.cashbackTransaction.count({ where: { shopDomain: session.shop } }),
+    prisma.customer.count({ where: { shopDomain: session.shop } }),
+    prisma.cashbackTransaction.findFirst({
+      where: { shopDomain: session.shop },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true }
+    }),
+    prisma.cashbackTransaction.findFirst({
+      where: { shopDomain: session.shop },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true }
+    })
+  ]);
   
   return json<LoaderData>({
     shopDomain: session.shop,
-    migrationStatus,
+    hasReadAllOrders,
+    currentImport: currentImport ? {
+      id: currentImport.id,
+      status: currentImport.status,
+      totalRecords: currentImport.totalRecords,
+      processedRecords: currentImport.processedRecords,
+      failedRecords: currentImport.failedRecords,
+      startedAt: currentImport.startedAt?.toISOString() || null,
+      completedAt: currentImport.completedAt?.toISOString() || null,
+      errors: currentImport.errors as string[] | null
+    } : null,
     stats: {
-      transactionCount,
-      customerCount
+      existingTransactions: transactionCount,
+      existingCustomers: customerCount,
+      oldestTransaction: oldestTransaction?.createdAt.toISOString() || null,
+      newestTransaction: newestTransaction?.createdAt.toISOString() || null
     }
   });
 }
@@ -84,49 +108,34 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const action = formData.get('_action') as string;
   
-  if (action === 'check-status') {
-    const jobId = formData.get('jobId') as string;
-    const statusRaw = await prisma.migrationHistory.findUnique({
-      where: { id: jobId }
-    });
-    
-    // Transform the status to match our interface
-    const status: MigrationStatus | null = statusRaw ? {
-      id: statusRaw.id,
-      shopDomain: statusRaw.shopDomain,
-      status: statusRaw.status,
-      totalRecords: statusRaw.totalRecords,
-      processedRecords: statusRaw.processedRecords,
-      failedRecords: statusRaw.failedRecords,
-      errors: statusRaw.errors as string[] | null,
-      metadata: statusRaw.metadata || undefined,
-      startedAt: statusRaw.startedAt,
-      completedAt: statusRaw.completedAt,
-      createdAt: statusRaw.createdAt
-    } : null;
-    
-    return json<ActionData>({ status });
-  }
-  
-  if (action === 'start-migration') {
+  if (action === 'start-import') {
     try {
-      // Check if a migration is already running
-      const runningMigration = await prisma.migrationHistory.findFirst({
-        where: {
-          shopDomain: session.shop,
-          status: { in: ['PENDING', 'PROCESSING'] }
-        }
-      });
+      const importType = formData.get('importType') as string;
+      const customStartDate = formData.get('customStartDate') as string;
       
-      if (runningMigration) {
-        return json<ActionData>({ 
-          success: false, 
-          error: 'A migration is already in progress' 
-        }, { status: 400 });
+      let startDate: string | undefined;
+      
+      // Calculate start date based on import type
+      const now = new Date();
+      switch (importType) {
+        case '3months':
+          startDate = new Date(now.setMonth(now.getMonth() - 3)).toISOString().split('T')[0];
+          break;
+        case '6months':
+          startDate = new Date(now.setMonth(now.getMonth() - 6)).toISOString().split('T')[0];
+          break;
+        case '12months':
+          startDate = new Date(now.setFullYear(now.getFullYear() - 1)).toISOString().split('T')[0];
+          break;
+        case 'custom':
+          startDate = customStartDate;
+          break;
+        case 'all':
+        default:
+          startDate = undefined; // No date filter for all orders
+          break;
       }
       
-      // Start the migration with date range
-      const startDate = formData.get('startDate') as string;
       const migrationJob = await migrateTransactions({
         shopDomain: session.shop,
         admin,
@@ -136,85 +145,83 @@ export async function action({ request }: ActionFunctionArgs) {
         }
       });
       
-      return json<ActionData>({ 
-        success: true, 
-        jobId: migrationJob.id,
-        message: 'Migration started successfully' 
+      return json<ActionData>({
+        success: true,
+        migrationJob: {
+          id: migrationJob.id,
+          status: migrationJob.status
+        }
       });
       
     } catch (error) {
-      console.error('Migration error:', error);
-      return json<ActionData>({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Migration failed' 
-      }, { status: 500 });
+      console.error('Import error:', error);
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to start import'
+      });
     }
   }
   
-  return json<ActionData>({ success: false, error: 'Invalid action' }, { status: 400 });
+  if (action === 'cancel-import') {
+    try {
+      const jobId = formData.get('jobId') as string;
+      
+      await prisma.migrationHistory.update({
+        where: { id: jobId },
+        data: {
+          status: 'CANCELLED',
+          completedAt: new Date()
+        }
+      });
+      
+      return json<ActionData>({ success: true });
+    } catch (error) {
+      return json<ActionData>({
+        success: false,
+        error: 'Failed to cancel import'
+      });
+    }
+  }
+  
+  return json<ActionData>({ success: false, error: 'Invalid action' });
 }
 
-export default function TransactionMigration() {
-  const { shopDomain, migrationStatus, stats } = useLoaderData<LoaderData>();
+export default function ImportOrders() {
+  const { shopDomain, hasReadAllOrders, currentImport, stats } = useLoaderData<LoaderData>();
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
+  const fetcher = useFetcher();
   const submit = useSubmit();
-  
-  const [dateRange, setDateRange] = useState('12');
-  const [isPolling, setIsPolling] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState<MigrationStatus | null>(migrationStatus);
+  const [importType, setImportType] = useState('all');
+  const [customDate, setCustomDate] = useState('');
   
   const isSubmitting = navigation.state === 'submitting';
   
-  // Poll for status updates when migration is running
+  // Auto-refresh status when import is running
   useEffect(() => {
-    if (currentStatus?.status === 'PROCESSING' || 
-        (actionData?.success && actionData?.jobId)) {
-      setIsPolling(true);
+    if (currentImport && ['PENDING', 'PROCESSING'].includes(currentImport.status)) {
       const interval = setInterval(() => {
-        const formData = new FormData();
-        formData.append('_action', 'check-status');
-        formData.append('jobId', actionData?.jobId || currentStatus?.id || '');
-        submit(formData, { method: 'post', replace: true });
-      }, 3000); // Poll every 3 seconds
+        fetcher.load('/app/import-orders');
+      }, 3000); // Refresh every 3 seconds
       
       return () => clearInterval(interval);
-    } else {
-      setIsPolling(false);
     }
-  }, [currentStatus, actionData, submit]);
+  }, [currentImport?.status]);
   
-  // Update status from action data
-  useEffect(() => {
-    if (actionData?.status) {
-      setCurrentStatus(actionData.status);
-    }
-  }, [actionData]);
-  
-  // Update initial migration status
-  useEffect(() => {
-    if (migrationStatus) {
-      setCurrentStatus(migrationStatus);
-    }
-  }, [migrationStatus]);
-  
-  const getStartDate = () => {
-    const months = parseInt(dateRange);
-    if (months === 0) return '2015-01-01'; // Shopify's earliest date
-    const date = new Date();
-    date.setMonth(date.getMonth() - months);
-    return date.toISOString().split('T')[0];
-  };
+  // Calculate progress percentage
+  const progressPercentage = currentImport && currentImport.totalRecords > 0
+    ? Math.round((currentImport.processedRecords / currentImport.totalRecords) * 100)
+    : 0;
   
   const styles = {
     container: {
-      maxWidth: '800px',
+      maxWidth: '900px',
       margin: '0 auto',
       padding: '40px 24px'
     },
     header: {
-      textAlign: 'center' as const,
-      marginBottom: '48px'
+      marginBottom: '32px',
+      textAlign: 'center' as const
     },
     title: {
       fontSize: '32px',
@@ -225,36 +232,56 @@ export default function TransactionMigration() {
     subtitle: {
       fontSize: '18px',
       color: '#666',
-      lineHeight: '1.5'
+      marginBottom: '24px'
+    },
+    warningBanner: {
+      backgroundColor: '#fef3c7',
+      border: '1px solid #f59e0b',
+      borderRadius: '8px',
+      padding: '16px',
+      marginBottom: '24px',
+      fontSize: '14px',
+      color: '#92400e'
+    },
+    successBanner: {
+      backgroundColor: '#d1fae5',
+      border: '1px solid #10b981',
+      borderRadius: '8px',
+      padding: '16px',
+      marginBottom: '24px',
+      fontSize: '14px',
+      color: '#065f46'
     },
     statsGrid: {
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: '20px',
-      marginBottom: '40px'
+      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+      gap: '16px',
+      marginBottom: '32px'
     },
     statCard: {
       backgroundColor: '#f8f9fa',
       padding: '24px',
       borderRadius: '12px',
-      textAlign: 'center' as const
+      textAlign: 'center' as const,
+      border: '1px solid #e5e7eb'
     },
     statValue: {
-      fontSize: '36px',
+      fontSize: '28px',
       fontWeight: '700',
-      color: '#10b981',
-      marginBottom: '4px'
+      color: '#3b82f6',
+      marginBottom: '8px'
     },
     statLabel: {
       fontSize: '14px',
-      color: '#666'
+      color: '#666',
+      fontWeight: '500'
     },
-    migrationCard: {
+    importSection: {
       backgroundColor: 'white',
       padding: '32px',
       borderRadius: '12px',
       border: '1px solid #e5e7eb',
-      marginBottom: '24px'
+      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
     },
     sectionTitle: {
       fontSize: '20px',
@@ -262,32 +289,56 @@ export default function TransactionMigration() {
       marginBottom: '24px',
       color: '#1a1a1a'
     },
-    formGroup: {
+    radioGroup: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: '12px',
       marginBottom: '24px'
     },
-    label: {
-      display: 'block',
-      marginBottom: '8px',
-      fontSize: '14px',
-      fontWeight: '500',
-      color: '#374151'
-    },
-    select: {
-      width: '100%',
-      padding: '10px 14px',
-      border: '1px solid #e5e7eb',
-      borderRadius: '6px',
-      fontSize: '15px',
+    radioOption: {
+      display: 'flex',
+      alignItems: 'center',
+      padding: '16px',
+      border: '2px solid #e5e7eb',
+      borderRadius: '8px',
+      cursor: 'pointer',
+      transition: 'all 0.2s',
       backgroundColor: 'white'
     },
-    helpText: {
-      marginTop: '6px',
-      fontSize: '13px',
-      color: '#6b7280'
+    radioOptionSelected: {
+      borderColor: '#3b82f6',
+      backgroundColor: '#eff6ff'
+    },
+    radioInput: {
+      marginRight: '12px',
+      width: '20px',
+      height: '20px',
+      cursor: 'pointer'
+    },
+    radioLabel: {
+      fontSize: '16px',
+      fontWeight: '500',
+      color: '#1a1a1a',
+      cursor: 'pointer',
+      flex: 1
+    },
+    radioDescription: {
+      fontSize: '14px',
+      color: '#666',
+      marginTop: '4px'
+    },
+    dateInput: {
+      padding: '12px 16px',
+      border: '2px solid #e5e7eb',
+      borderRadius: '8px',
+      fontSize: '16px',
+      width: '100%',
+      marginTop: '12px',
+      backgroundColor: '#f9fafb'
     },
     button: {
       padding: '14px 28px',
-      backgroundColor: '#10b981',
+      backgroundColor: '#3b82f6',
       color: 'white',
       border: 'none',
       borderRadius: '8px',
@@ -298,248 +349,301 @@ export default function TransactionMigration() {
       width: '100%'
     },
     buttonDisabled: {
-      backgroundColor: '#6b7280',
+      backgroundColor: '#9ca3af',
       cursor: 'not-allowed'
     },
-    statusCard: {
-      padding: '20px',
+    buttonCancel: {
+      backgroundColor: '#ef4444'
+    },
+    progressSection: {
+      backgroundColor: '#f3f4f6',
+      padding: '24px',
       borderRadius: '8px',
-      marginBottom: '24px'
-    },
-    statusProcessing: {
-      backgroundColor: '#dbeafe',
-      border: '1px solid #93c5fd',
-      color: '#1e40af'
-    },
-    statusCompleted: {
-      backgroundColor: '#d1fae5',
-      border: '1px solid #6ee7b7',
-      color: '#065f46'
-    },
-    statusFailed: {
-      backgroundColor: '#fee2e2',
-      border: '1px solid #fca5a5',
-      color: '#991b1b'
+      marginTop: '24px'
     },
     progressBar: {
       width: '100%',
-      height: '8px',
+      height: '24px',
       backgroundColor: '#e5e7eb',
-      borderRadius: '4px',
+      borderRadius: '12px',
       overflow: 'hidden',
-      marginTop: '12px'
+      marginBottom: '16px'
     },
     progressFill: {
       height: '100%',
-      backgroundColor: '#10b981',
-      transition: 'width 0.3s ease'
+      backgroundColor: '#3b82f6',
+      transition: 'width 0.3s ease',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'white',
+      fontSize: '14px',
+      fontWeight: '600'
     },
-    infoBox: {
-      backgroundColor: '#f0fdf4',
-      border: '1px solid #bbf7d0',
-      padding: '16px',
+    progressStats: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: '14px',
+      color: '#666'
+    },
+    errorList: {
+      backgroundColor: '#fee2e2',
+      border: '1px solid #fca5a5',
       borderRadius: '8px',
-      marginBottom: '24px'
-    },
-    warningBox: {
-      backgroundColor: '#fef3c7',
-      border: '1px solid #fde68a',
       padding: '16px',
-      borderRadius: '8px',
-      marginBottom: '24px'
+      marginTop: '16px',
+      maxHeight: '200px',
+      overflow: 'auto'
     },
-    list: {
-      marginTop: '12px',
-      marginLeft: '20px',
-      lineHeight: '1.8'
-    },
-    icon: {
-      marginRight: '8px',
-      fontSize: '20px'
+    errorItem: {
+      fontSize: '13px',
+      color: '#991b1b',
+      marginBottom: '4px'
     }
   };
   
-  const getStatusStyle = () => {
-    if (!currentStatus) return {};
-    switch (currentStatus.status) {
-      case 'PROCESSING':
-        return styles.statusProcessing;
-      case 'COMPLETED':
-        return styles.statusCompleted;
-      case 'FAILED':
-        return styles.statusFailed;
-      default:
-        return {};
+  const importOptions = [
+    {
+      value: 'all',
+      label: 'All Orders',
+      description: hasReadAllOrders 
+        ? 'Import all historical orders from your store' 
+        : 'Import all orders (limited to last 60 days without full access)'
+    },
+    {
+      value: '12months',
+      label: 'Last 12 Months',
+      description: 'Import orders from the past year'
+    },
+    {
+      value: '6months',
+      label: 'Last 6 Months',
+      description: 'Import orders from the past 6 months'
+    },
+    {
+      value: '3months',
+      label: 'Last 3 Months',
+      description: 'Import orders from the past 3 months'
+    },
+    {
+      value: 'custom',
+      label: 'Custom Date Range',
+      description: 'Choose a specific start date for import'
     }
-  };
-  
-  const getProgress = () => {
-    if (!currentStatus || currentStatus.totalRecords === 0) return 0;
-    return Math.round((currentStatus.processedRecords / currentStatus.totalRecords) * 100);
-  };
+  ];
   
   return (
     <div style={styles.container}>
-      {/* Header */}
       <div style={styles.header}>
-        <h1 style={styles.title}>Import Transaction History</h1>
+        <h1 style={styles.title}>Import Your Orders</h1>
         <p style={styles.subtitle}>
-          Import your historical orders from Shopify to enable cashback calculations
-          and customer tier assignments
+          Import your Shopify orders to start tracking cashback rewards for your customers
         </p>
       </div>
       
-      {/* Current Stats */}
+      {/* Access scope banner */}
+      {hasReadAllOrders ? (
+        <div style={styles.successBanner}>
+          ✅ <strong>Full Access Enabled:</strong> Your app has access to all historical orders. 
+          You can import your complete order history.
+        </div>
+      ) : (
+        <div style={styles.warningBanner}>
+          ⚠️ <strong>Limited Access:</strong> Your app can only access orders from the last 60 days. 
+          To import older orders, you'll need to request the "read_all_orders" scope from Shopify.
+        </div>
+      )}
+      
+      {/* Current stats */}
       <div style={styles.statsGrid}>
         <div style={styles.statCard}>
-          <div style={styles.statValue}>{stats.transactionCount}</div>
-          <div style={styles.statLabel}>Transactions Imported</div>
+          <div style={styles.statValue}>{stats.existingTransactions.toLocaleString()}</div>
+          <div style={styles.statLabel}>Imported Orders</div>
         </div>
         <div style={styles.statCard}>
-          <div style={styles.statValue}>{stats.customerCount}</div>
-          <div style={styles.statLabel}>Customers in Database</div>
+          <div style={styles.statValue}>{stats.existingCustomers.toLocaleString()}</div>
+          <div style={styles.statLabel}>Total Customers</div>
         </div>
+        {stats.oldestTransaction && (
+          <div style={styles.statCard}>
+            <div style={styles.statValue}>
+              {new Date(stats.oldestTransaction).toLocaleDateString()}
+            </div>
+            <div style={styles.statLabel}>Oldest Order</div>
+          </div>
+        )}
+        {stats.newestTransaction && (
+          <div style={styles.statCard}>
+            <div style={styles.statValue}>
+              {new Date(stats.newestTransaction).toLocaleDateString()}
+            </div>
+            <div style={styles.statLabel}>Newest Order</div>
+          </div>
+        )}
       </div>
       
-      {/* Migration Status */}
-      {currentStatus && (
-        <div style={{ ...styles.statusCard, ...getStatusStyle() }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <strong>
-                {currentStatus.status === 'PROCESSING' && '⏳ Migration in Progress'}
-                {currentStatus.status === 'COMPLETED' && '✅ Migration Completed'}
-                {currentStatus.status === 'FAILED' && '❌ Migration Failed'}
-              </strong>
-              {currentStatus.status === 'PROCESSING' && (
-                <div style={{ marginTop: '8px' }}>
-                  Processing {currentStatus.processedRecords} of {currentStatus.totalRecords} orders...
+      {/* Import section */}
+      <div style={styles.importSection}>
+        {currentImport && ['PENDING', 'PROCESSING'].includes(currentImport.status) ? (
+          // Show progress if import is running
+          <>
+            <h2 style={styles.sectionTitle}>Import in Progress</h2>
+            <div style={styles.progressSection}>
+              <div style={styles.progressBar}>
+                <div 
+                  style={{
+                    ...styles.progressFill,
+                    width: `${progressPercentage}%`
+                  }}
+                >
+                  {progressPercentage > 10 && `${progressPercentage}%`}
                 </div>
-              )}
-              {currentStatus.status === 'COMPLETED' && (
-                <div style={{ marginTop: '8px' }}>
-                  Successfully imported {currentStatus.processedRecords} orders
-                  {currentStatus.failedRecords > 0 && ` (${currentStatus.failedRecords} failed)`}
+              </div>
+              <div style={styles.progressStats}>
+                <span>
+                  Status: <strong>{currentImport.status}</strong>
+                </span>
+                <span>
+                  Processed: <strong>{currentImport.processedRecords.toLocaleString()}</strong> / {currentImport.totalRecords.toLocaleString() || '?'}
+                </span>
+                {currentImport.failedRecords > 0 && (
+                  <span>
+                    Failed: <strong style={{ color: '#ef4444' }}>{currentImport.failedRecords.toLocaleString()}</strong>
+                  </span>
+                )}
+              </div>
+              {currentImport.startedAt && (
+                <div style={{ marginTop: '12px', fontSize: '14px', color: '#666' }}>
+                  Started: {new Date(currentImport.startedAt).toLocaleString()}
                 </div>
               )}
             </div>
-            {currentStatus.completedAt && (
-              <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                {new Date(currentStatus.completedAt).toLocaleString()}
+            
+            {currentImport.errors && currentImport.errors.length > 0 && (
+              <div style={styles.errorList}>
+                <strong style={{ marginBottom: '8px', display: 'block' }}>Errors:</strong>
+                {currentImport.errors.slice(0, 10).map((error, index) => (
+                  <div key={index} style={styles.errorItem}>• {error}</div>
+                ))}
+                {currentImport.errors.length > 10 && (
+                  <div style={styles.errorItem}>... and {currentImport.errors.length - 10} more</div>
+                )}
               </div>
             )}
-          </div>
-          
-          {currentStatus.status === 'PROCESSING' && (
-            <div style={styles.progressBar}>
-              <div style={{ ...styles.progressFill, width: `${getProgress()}%` }} />
-            </div>
-          )}
-          
-          {currentStatus.status === 'FAILED' && currentStatus.errors && (
-            <div style={{ marginTop: '12px', fontSize: '14px' }}>
-              Error: {Array.isArray(currentStatus.errors) ? currentStatus.errors[0] : 'Unknown error'}
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Migration Form */}
-      <div style={styles.migrationCard}>
-        <h2 style={styles.sectionTitle}>
-          <span style={styles.icon}>📥</span>
-          Import Settings
-        </h2>
-        
-        <div style={styles.infoBox}>
-          <strong>What will be imported:</strong>
-          <ul style={styles.list}>
-            <li>Customer information (email, Shopify ID)</li>
-            <li>Order history (paid orders only)</li>
-            <li>Order amounts and dates for cashback calculation</li>
-            <li>Financial status to ensure accurate records</li>
-          </ul>
-        </div>
-        
-        <Form method="post">
-          <input type="hidden" name="_action" value="start-migration" />
-          <input type="hidden" name="startDate" value={getStartDate()} />
-          
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Import Orders From</label>
-            <select
-              value={dateRange}
-              onChange={(e) => setDateRange(e.target.value)}
-              style={styles.select}
-              disabled={isSubmitting || currentStatus?.status === 'PROCESSING'}
-            >
-              <option value="3">Last 3 months</option>
-              <option value="6">Last 6 months</option>
-              <option value="12">Last 12 months</option>
-              <option value="24">Last 2 years</option>
-              <option value="60">Last 5 years</option>
-              <option value="0">All time</option>
-            </select>
-            <p style={styles.helpText}>
-              Older orders will help establish customer tiers and lifetime value
-            </p>
-          </div>
-          
-          <div style={styles.warningBox}>
-            <strong>⚠️ Important:</strong>
-            <ul style={{ ...styles.list, margin: '8px 0 0 20px' }}>
-              <li>This process may take several minutes depending on order volume</li>
-              <li>Only completed/paid orders will be imported</li>
-              <li>Orders without customer information will be skipped</li>
-              <li>You can safely close this page - the import will continue in the background</li>
-              <li>Note: Shopify only provides access to orders from the last 60 days by default</li>
-            </ul>
-          </div>
-          
-          <button
-            type="submit"
-            disabled={isSubmitting || currentStatus?.status === 'PROCESSING'}
-            style={{
-              ...styles.button,
-              ...(isSubmitting || currentStatus?.status === 'PROCESSING' ? styles.buttonDisabled : {})
-            }}
-          >
-            {isSubmitting && 'Starting Import...'}
-            {currentStatus?.status === 'PROCESSING' && 'Import in Progress...'}
-            {!isSubmitting && currentStatus?.status !== 'PROCESSING' && 'Start Import'}
-          </button>
-        </Form>
+            
+            <Form method="post" style={{ marginTop: '24px' }}>
+              <input type="hidden" name="_action" value="cancel-import" />
+              <input type="hidden" name="jobId" value={currentImport.id} />
+              <button
+                type="submit"
+                style={{
+                  ...styles.button,
+                  ...styles.buttonCancel
+                }}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Cancelling...' : 'Cancel Import'}
+              </button>
+            </Form>
+          </>
+        ) : (
+          // Show import options
+          <>
+            <h2 style={styles.sectionTitle}>Choose Import Range</h2>
+            <Form method="post">
+              <input type="hidden" name="_action" value="start-import" />
+              
+              <div style={styles.radioGroup}>
+                {importOptions.map((option) => (
+                  <label
+                    key={option.value}
+                    style={{
+                      ...styles.radioOption,
+                      ...(importType === option.value ? styles.radioOptionSelected : {})
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="importType"
+                      value={option.value}
+                      checked={importType === option.value}
+                      onChange={(e) => setImportType(e.target.value)}
+                      style={styles.radioInput}
+                    />
+                    <div>
+                      <div style={styles.radioLabel}>{option.label}</div>
+                      <div style={styles.radioDescription}>{option.description}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              
+              {importType === 'custom' && (
+                <input
+                  type="date"
+                  name="customStartDate"
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  max={new Date().toISOString().split('T')[0]}
+                  required={importType === 'custom'}
+                  style={styles.dateInput}
+                  placeholder="Select start date"
+                />
+              )}
+              
+              {currentImport?.status === 'COMPLETED' && (
+                <div style={{
+                  ...styles.successBanner,
+                  marginTop: '24px',
+                  marginBottom: '16px'
+                }}>
+                  ✅ Last import completed successfully on {new Date(currentImport.completedAt!).toLocaleString()}
+                  <br />
+                  Processed: {currentImport.processedRecords.toLocaleString()} orders
+                </div>
+              )}
+              
+              {currentImport?.status === 'FAILED' && (
+                <div style={{
+                  ...styles.warningBanner,
+                  marginTop: '24px',
+                  marginBottom: '16px',
+                  backgroundColor: '#fee2e2',
+                  borderColor: '#ef4444',
+                  color: '#991b1b'
+                }}>
+                  ❌ Last import failed. Please try again or contact support if the issue persists.
+                </div>
+              )}
+              
+              <button
+                type="submit"
+                disabled={isSubmitting || (importType === 'custom' && !customDate)}
+                style={{
+                  ...styles.button,
+                  ...(isSubmitting || (importType === 'custom' && !customDate) ? styles.buttonDisabled : {})
+                }}
+              >
+                {isSubmitting ? 'Starting Import...' : 'Start Import'}
+              </button>
+            </Form>
+          </>
+        )}
       </div>
       
-      {/* Next Steps */}
-      {currentStatus?.status === 'COMPLETED' && (
-        <div style={styles.migrationCard}>
-          <h2 style={styles.sectionTitle}>
-            <span style={styles.icon}>🎯</span>
-            Next Steps
-          </h2>
-          <p style={{ marginBottom: '16px', lineHeight: '1.6' }}>
-            Great! Your transaction history has been imported. You can now:
-          </p>
-          <ul style={styles.list}>
-            <li>
-              <a href="/app/customers/tiers" style={{ color: '#10b981', textDecoration: 'none' }}>
-                Assign customer tiers based on their purchase history
-              </a>
-            </li>
-            <li>
-              <a href="/app/customers/credit" style={{ color: '#10b981', textDecoration: 'none' }}>
-                Award retroactive cashback credits to loyal customers
-              </a>
-            </li>
-            <li>
-              <a href="/app/tiers" style={{ color: '#10b981', textDecoration: 'none' }}>
-                Configure your tier settings and cashback percentages
-              </a>
-            </li>
-          </ul>
-        </div>
-      )}
+      {/* Help section */}
+      <div style={{ marginTop: '32px', padding: '24px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+        <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>
+          Important Notes:
+        </h3>
+        <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px', color: '#666' }}>
+          <li>Only <strong>paid orders</strong> will be imported</li>
+          <li>Orders without customer information (guest checkouts) will be skipped</li>
+          <li>The import process runs in the background - you can navigate away and check back later</li>
+          <li>Duplicate orders will be automatically skipped</li>
+          <li>Large stores may take several minutes to complete the import</li>
+        </ul>
+      </div>
     </div>
   );
 }
