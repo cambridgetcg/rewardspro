@@ -33,6 +33,12 @@ interface LoaderData {
       customerEmail: string;
     };
   };
+  currentDate: string;
+  presetDates: {
+    threeMonths: string;
+    sixMonths: string;
+    twelveMonths: string;
+  };
 }
 
 interface ActionData {
@@ -41,10 +47,29 @@ interface ActionData {
   testResult?: {
     query: string;
     variables: any;
+    queryString: string;
     response: any;
-    processedOrder?: TestOrder;
-    createdCustomer?: any;
-    createdTransaction?: any;
+    ordersSummary?: {
+      totalOrders: number;
+      oldestOrder?: {
+        name: string;
+        createdAt: string;
+      };
+      newestOrder?: {
+        name: string;
+        createdAt: string;
+      };
+      dateDistribution?: {
+        withinRange: number;
+        outsideRange: number;
+      };
+    };
+    databaseTest?: {
+      attemptedInserts: number;
+      successfulInserts: number;
+      skippedDuplicates: number;
+      errors: string[];
+    };
   };
 }
 
@@ -59,12 +84,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
     where: { shopDomain: session.shop }
   });
   
-  // Get oldest transaction for reference
   const oldestTransaction = await prisma.cashbackTransaction.findFirst({
     where: { shopDomain: session.shop },
     orderBy: { createdAt: 'asc' },
     include: { customer: true }
   });
+  
+  const now = new Date();
+  const threeMonthsAgo = new Date(now);
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+  
+  const sixMonthsAgo = new Date(now);
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  
+  const twelveMonthsAgo = new Date(now);
+  twelveMonthsAgo.setFullYear(twelveMonthsAgo.getFullYear() - 1);
   
   return json<LoaderData>({
     shopDomain: session.shop,
@@ -76,6 +110,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
         orderAmount: oldestTransaction.orderAmount,
         customerEmail: oldestTransaction.customer.email
       } : undefined
+    },
+    currentDate: now.toISOString(),
+    presetDates: {
+      threeMonths: threeMonthsAgo.toISOString().split('T')[0],
+      sixMonths: sixMonthsAgo.toISOString().split('T')[0],
+      twelveMonths: twelveMonthsAgo.toISOString().split('T')[0]
     }
   });
 }
@@ -85,313 +125,56 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const action = formData.get('_action') as string;
   
-  if (action === 'test-all-orders') {
+  if (action === 'test-date-filter') {
     try {
-      // Test fetching ALL orders without date restrictions
-      const allOrdersQuery = `
-        query GetAllOrdersTest {
-          oldestOrders: orders(
-            first: 5, 
-            query: "financial_status:paid", 
-            sortKey: CREATED_AT, 
-            reverse: false
-          ) {
-            edges {
-              node {
-                id
-                name
-                createdAt
-                displayFinancialStatus
-                totalPriceSet {
-                  shopMoney {
-                    amount
-                  }
-                }
-                customer {
-                  email
-                }
-              }
-            }
-            pageInfo {
-              hasNextPage
-            }
-          }
-          newestOrders: orders(
-            first: 5, 
-            query: "financial_status:paid", 
-            sortKey: CREATED_AT, 
-            reverse: true
-          ) {
-            edges {
-              node {
-                id
-                name
-                createdAt
-                displayFinancialStatus
-              }
-            }
-            pageInfo {
-              hasPreviousPage
-            }
-          }
-        }
-      `;
+      const filterType = formData.get('filterType') as string;
+      const customDate = formData.get('customDate') as string;
+      const testDatabase = formData.get('testDatabase') === 'true';
       
-      console.log('Testing full order access with read_all_orders scope...');
+      let startDate: string;
+      const now = new Date();
       
-      const response = await admin.graphql(allOrdersQuery);
-      const responseData = await response.json();
-      
-      // Additional query to estimate total orders by checking pagination
-      const estimateQuery = `
-        query EstimateOrderCount {
-          orders(first: 250, query: "financial_status:paid") {
-            edges {
-              node {
-                id
-              }
-            }
-            pageInfo {
-              hasNextPage
-            }
-          }
-        }
-      `;
-      
-      const estimateResponse = await admin.graphql(estimateQuery);
-      const estimateData = await estimateResponse.json();
-      
-      return json<ActionData>({
-        success: true,
-        testResult: {
-          query: allOrdersQuery,
-          variables: {},
-          response: {
-            ...responseData,
-            estimate: {
-              hasMoreThan250Orders: estimateData.data?.orders?.pageInfo?.hasNextPage || false,
-              message: estimateData.data?.orders?.pageInfo?.hasNextPage 
-                ? "You have more than 250 paid orders" 
-                : `You have approximately ${estimateData.data?.orders?.edges?.length || 0} paid orders`
-            }
-          }
-        }
-      });
-      
-    } catch (error) {
-      console.error('All orders test error:', error);
-      return json<ActionData>({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  }
-  
-  if (action === 'check-access') {
-    try {
-      // Test query to check order access and get the oldest available order
-      const accessCheckQuery = `
-        query CheckOrderAccess {
-          shop {
-            name
-            email
-          }
-          orders(first: 1, sortKey: CREATED_AT, reverse: false) {
-            edges {
-              node {
-                id
-                name
-                createdAt
-                displayFinancialStatus
-              }
-            }
-          }
-          ordersCount: orders(first: 1) {
-            count
-          }
-          app: currentAppInstallation {
-            id
-            accessScopes {
-              handle
-            }
-          }
-        }
-      `;
-      
-      console.log('Checking order access...');
-      
-      const response = await admin.graphql(accessCheckQuery);
-      const responseData = await response.json();
-      
-      // Also try to get orders from a specific old date
-      const oldDateQuery = `
-        query GetOldOrders {
-          orders(first: 5, query: "created_at:<'2023-01-01'", sortKey: CREATED_AT, reverse: false) {
-            edges {
-              node {
-                id
-                name
-                createdAt
-              }
-            }
-          }
-        }
-      `;
-      
-      const oldOrdersResponse = await admin.graphql(oldDateQuery);
-      const oldOrdersData = await oldOrdersResponse.json();
-      
-      return json<ActionData>({
-        success: true,
-        testResult: {
-          query: accessCheckQuery,
-          variables: {},
-          response: {
-            accessCheck: responseData,
-            oldOrdersCheck: oldOrdersData
-          }
-        }
-      });
-      
-    } catch (error) {
-      console.error('Access check error:', error);
-      return json<ActionData>({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  }
-  
-  if (action === 'test-oldest') {
-    try {
-      // Query to get the oldest order
-      const oldestOrderQuery = `
-        query GetOldestOrder {
-          orders(first: 1, sortKey: CREATED_AT, reverse: false, query: "financial_status:paid") {
-            edges {
-              node {
-                id
-                name
-                createdAt
-                totalPriceSet {
-                  shopMoney {
-                    amount
-                    currencyCode
-                  }
-                }
-                displayFinancialStatus
-                customer {
-                  id
-                  email
-                }
-              }
-            }
-          }
-        }
-      `;
-      
-      console.log('Executing GraphQL query:', oldestOrderQuery);
-      
-      const response = await admin.graphql(oldestOrderQuery);
-      const responseData = await response.json();
-      
-      console.log('GraphQL Response:', JSON.stringify(responseData, null, 2));
-      
-      if (!responseData.data?.orders?.edges?.length) {
-        return json<ActionData>({
-          success: false,
-          error: 'No paid orders found',
-          testResult: {
-            query: oldestOrderQuery,
-            variables: {},
-            response: responseData
-          }
-        });
+      switch (filterType) {
+        case '3months':
+          const threeMonths = new Date(now);
+          threeMonths.setMonth(threeMonths.getMonth() - 3);
+          startDate = threeMonths.toISOString().split('T')[0];
+          break;
+        case '6months':
+          const sixMonths = new Date(now);
+          sixMonths.setMonth(sixMonths.getMonth() - 6);
+          startDate = sixMonths.toISOString().split('T')[0];
+          break;
+        case '12months':
+          const twelveMonths = new Date(now);
+          twelveMonths.setFullYear(twelveMonths.getFullYear() - 1);
+          startDate = twelveMonths.toISOString().split('T')[0];
+          break;
+        case 'custom':
+          startDate = customDate;
+          break;
+        default:
+          throw new Error('Invalid filter type');
       }
       
-      const order = responseData.data.orders.edges[0].node as TestOrder;
+      // Build the query string - THIS IS THE KEY PART TO DEBUG
+      const queryString = `created_at:>='${startDate}T00:00:00Z' AND financial_status:paid`;
       
-      // Process the order
-      let createdCustomer = null;
-      let createdTransaction = null;
+      // Also test alternative query formats
+      const alternativeQueries = [
+        `created_at:>'${startDate}' AND financial_status:paid`,
+        `created_at:>=${startDate} AND financial_status:paid`,
+        `financial_status:paid AND created_at:>='${startDate}'`,
+      ];
       
-      if (order.customer) {
-        const shopifyOrderId = order.id.split('/').pop()!;
-        const shopifyCustomerId = order.customer.id.split('/').pop()!;
-        const orderAmount = parseFloat(order.totalPriceSet.shopMoney.amount);
-        
-        // Create or get customer
-        createdCustomer = await prisma.customer.upsert({
-          where: {
-            shopDomain_shopifyCustomerId: {
-              shopDomain: session.shop,
-              shopifyCustomerId
-            }
-          },
-          update: {},
-          create: {
-            shopDomain: session.shop,
-            shopifyCustomerId,
-            email: order.customer.email
-          }
-        });
-        
-        // Create transaction
-        createdTransaction = await prisma.cashbackTransaction.upsert({
-          where: {
-            shopDomain_shopifyOrderId: {
-              shopDomain: session.shop,
-              shopifyOrderId
-            }
-          },
-          update: {},
-          create: {
-            shopDomain: session.shop,
-            customerId: createdCustomer.id,
-            shopifyOrderId,
-            orderAmount,
-            cashbackAmount: 0,
-            cashbackPercent: 0,
-            status: TransactionStatus.COMPLETED,
-            createdAt: new Date(order.createdAt)
-          }
-        });
-      }
+      console.log('Testing primary query:', queryString);
+      console.log('Start date:', startDate);
+      console.log('Alternative queries:', alternativeQueries);
       
-      return json<ActionData>({
-        success: true,
-        testResult: {
-          query: oldestOrderQuery,
-          variables: {},
-          response: responseData,
-          processedOrder: order,
-          createdCustomer,
-          createdTransaction
-        }
-      });
-      
-    } catch (error) {
-      console.error('Test import error:', error);
-      return json<ActionData>({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        testResult: {
-          query: 'Failed to execute',
-          variables: {},
-          response: { error: error instanceof Error ? error.message : 'Unknown error' }
-        }
-      });
-    }
-  }
-  
-  if (action === 'test-date-range') {
-    try {
-      const dateRange = formData.get('dateRange') as string;
-      
-      // Query with date filter
-      const dateRangeQuery = `
-        query GetOrdersInRange($query: String) {
-          orders(first: 5, query: $query, sortKey: CREATED_AT, reverse: true) {
+      // Test the main query
+      const ordersQuery = `
+        query GetOrdersWithDateFilter($query: String) {
+          orders(first: 50, query: $query, sortKey: CREATED_AT, reverse: false) {
             edges {
               node {
                 id
@@ -412,35 +195,273 @@ export async function action({ request }: ActionFunctionArgs) {
             }
             pageInfo {
               hasNextPage
+              endCursor
             }
           }
         }
       `;
       
-      const queryString = `created_at:>='${dateRange}T00:00:00Z' AND financial_status:paid`;
-      
-      console.log('Executing date range query with filter:', queryString);
-      
-      const response = await admin.graphql(dateRangeQuery, {
+      const response = await admin.graphql(ordersQuery, {
         variables: {
           query: queryString
         }
       });
-      const responseData = await response.json();
       
+      const responseData = await response.json();
       console.log('GraphQL Response:', JSON.stringify(responseData, null, 2));
+      
+      // Process the results
+      let ordersSummary: any = null;
+      let databaseTest: any = null;
+      
+      if (responseData.data?.orders?.edges) {
+        const orders = responseData.data.orders.edges.map((edge: any) => edge.node);
+        const startDateObj = new Date(startDate);
+        
+        // Analyze the orders
+        const withinRange = orders.filter((order: TestOrder) => 
+          new Date(order.createdAt) >= startDateObj
+        ).length;
+        
+        const outsideRange = orders.filter((order: TestOrder) => 
+          new Date(order.createdAt) < startDateObj
+        ).length;
+        
+        ordersSummary = {
+          totalOrders: orders.length,
+          oldestOrder: orders.length > 0 ? {
+            name: orders[0].name,
+            createdAt: orders[0].createdAt
+          } : undefined,
+          newestOrder: orders.length > 0 ? {
+            name: orders[orders.length - 1].name,
+            createdAt: orders[orders.length - 1].createdAt
+          } : undefined,
+          dateDistribution: {
+            withinRange,
+            outsideRange
+          }
+        };
+        
+        // Test database insertion if requested
+        if (testDatabase && orders.length > 0) {
+          const dbResults = {
+            attemptedInserts: 0,
+            successfulInserts: 0,
+            skippedDuplicates: 0,
+            errors: [] as string[]
+          };
+          
+          // Test with first 5 orders
+          const testOrders = orders.slice(0, 5);
+          
+          for (const order of testOrders) {
+            if (!order.customer) {
+              dbResults.errors.push(`Order ${order.name} has no customer`);
+              continue;
+            }
+            
+            dbResults.attemptedInserts++;
+            
+            try {
+              const shopifyOrderId = order.id.split('/').pop()!;
+              const shopifyCustomerId = order.customer.id.split('/').pop()!;
+              const orderAmount = parseFloat(order.totalPriceSet.shopMoney.amount);
+              
+              // Create or get customer
+              const customer = await prisma.customer.upsert({
+                where: {
+                  shopDomain_shopifyCustomerId: {
+                    shopDomain: session.shop,
+                    shopifyCustomerId
+                  }
+                },
+                update: {},
+                create: {
+                  shopDomain: session.shop,
+                  shopifyCustomerId,
+                  email: order.customer.email
+                }
+              });
+              
+              // Check if transaction exists
+              const existingTransaction = await prisma.cashbackTransaction.findUnique({
+                where: {
+                  shopDomain_shopifyOrderId: {
+                    shopDomain: session.shop,
+                    shopifyOrderId
+                  }
+                }
+              });
+              
+              if (existingTransaction) {
+                dbResults.skippedDuplicates++;
+              } else {
+                // Create transaction
+                await prisma.cashbackTransaction.create({
+                  data: {
+                    shopDomain: session.shop,
+                    customerId: customer.id,
+                    shopifyOrderId,
+                    orderAmount,
+                    cashbackAmount: 0,
+                    cashbackPercent: 0,
+                    status: TransactionStatus.COMPLETED,
+                    createdAt: new Date(order.createdAt)
+                  }
+                });
+                dbResults.successfulInserts++;
+              }
+            } catch (error) {
+              dbResults.errors.push(
+                `Order ${order.name}: ${error instanceof Error ? error.message : 'Unknown error'}`
+              );
+            }
+          }
+          
+          databaseTest = dbResults;
+        }
+      }
       
       return json<ActionData>({
         success: true,
         testResult: {
-          query: dateRangeQuery,
+          query: ordersQuery,
           variables: { query: queryString },
-          response: responseData
+          queryString,
+          response: responseData,
+          ordersSummary,
+          databaseTest
         }
       });
       
     } catch (error) {
-      console.error('Date range test error:', error);
+      console.error('Date filter test error:', error);
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+  
+  if (action === 'test-query-formats') {
+    try {
+      const startDate = formData.get('startDate') as string;
+      
+      // Test different query formats to see which one works correctly
+      const queryFormats = [
+        {
+          name: 'ISO with T and Z',
+          query: `created_at:>='${startDate}T00:00:00Z' AND financial_status:paid`
+        },
+        {
+          name: 'Date only with >=',
+          query: `created_at:>='${startDate}' AND financial_status:paid`
+        },
+        {
+          name: 'Date only with >',
+          query: `created_at:>'${startDate}' AND financial_status:paid`
+        },
+        {
+          name: 'With quotes around date',
+          query: `created_at:>"${startDate}" AND financial_status:paid`
+        },
+        {
+          name: 'Financial status first',
+          query: `financial_status:paid AND created_at:>='${startDate}'`
+        },
+        {
+          name: 'Using updated_at instead',
+          query: `updated_at:>='${startDate}' AND financial_status:paid`
+        }
+      ];
+      
+      const results = [];
+      
+      for (const format of queryFormats) {
+        try {
+          const testQuery = `
+            query TestQueryFormat($query: String) {
+              orders(first: 5, query: $query, sortKey: CREATED_AT, reverse: false) {
+                edges {
+                  node {
+                    id
+                    name
+                    createdAt
+                  }
+                }
+              }
+            }
+          `;
+          
+          const response = await admin.graphql(testQuery, {
+            variables: { query: format.query }
+          });
+          
+          const data = await response.json();
+          
+          results.push({
+            format: format.name,
+            query: format.query,
+            success: !!data.data?.orders,
+            orderCount: data.data?.orders?.edges?.length || 0,
+            oldestOrder: data.data?.orders?.edges?.[0]?.node?.createdAt,
+            error: (data as any).errors?.[0]?.message
+          });
+        } catch (error) {
+          results.push({
+            format: format.name,
+            query: format.query,
+            success: false,
+            orderCount: 0,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
+      }
+      
+      return json<ActionData>({
+        success: true,
+        testResult: {
+          query: 'Multiple query format tests',
+          variables: { startDate },
+          queryString: `Testing ${queryFormats.length} different query formats`,
+          response: { results }
+        }
+      });
+      
+    } catch (error) {
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+  
+  if (action === 'clear-test-data') {
+    try {
+      // Clear test transactions from the last hour
+      const oneHourAgo = new Date();
+      oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+      
+      const deleted = await prisma.cashbackTransaction.deleteMany({
+        where: {
+          shopDomain: session.shop,
+          createdAt: {
+            gte: oneHourAgo
+          }
+        }
+      });
+      
+      return json<ActionData>({
+        success: true,
+        testResult: {
+          query: 'Clear test data',
+          variables: {},
+          queryString: 'Deleted recent test transactions',
+          response: { deletedCount: deleted.count }
+        }
+      });
+    } catch (error) {
       return json<ActionData>({
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -452,7 +473,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ImportTest() {
-  const { shopDomain, stats } = useLoaderData<LoaderData>();
+  const { shopDomain, stats, currentDate, presetDates } = useLoaderData<LoaderData>();
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === 'submitting';
@@ -527,13 +548,31 @@ export default function ImportTest() {
       backgroundColor: '#9ca3af',
       cursor: 'not-allowed'
     },
+    buttonSecondary: {
+      backgroundColor: '#6b7280'
+    },
+    buttonDanger: {
+      backgroundColor: '#ef4444'
+    },
     input: {
       padding: '8px 12px',
       border: '1px solid #e5e7eb',
       borderRadius: '4px',
       fontSize: '14px',
+      marginRight: '8px'
+    },
+    select: {
+      padding: '8px 12px',
+      border: '1px solid #e5e7eb',
+      borderRadius: '4px',
+      fontSize: '14px',
       marginRight: '8px',
-      width: '200px'
+      backgroundColor: 'white'
+    },
+    checkbox: {
+      marginRight: '8px',
+      width: '16px',
+      height: '16px'
     },
     codeBlock: {
       backgroundColor: '#f3f4f6',
@@ -561,6 +600,14 @@ export default function ImportTest() {
       marginTop: '16px',
       border: '1px solid #fca5a5'
     },
+    warningMessage: {
+      backgroundColor: '#fef3c7',
+      color: '#92400e',
+      padding: '12px',
+      borderRadius: '6px',
+      marginTop: '16px',
+      border: '1px solid #f59e0b'
+    },
     infoBox: {
       backgroundColor: '#dbeafe',
       border: '1px solid #93c5fd',
@@ -569,15 +616,32 @@ export default function ImportTest() {
       marginBottom: '16px',
       fontSize: '14px',
       color: '#1e40af'
+    },
+    summaryTable: {
+      width: '100%',
+      marginTop: '16px',
+      borderCollapse: 'collapse' as const
+    },
+    summaryRow: {
+      borderBottom: '1px solid #e5e7eb'
+    },
+    summaryCell: {
+      padding: '8px',
+      textAlign: 'left' as const,
+      fontSize: '14px'
+    },
+    summaryCellLabel: {
+      fontWeight: '600',
+      color: '#4b5563'
     }
   };
   
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>Import Testing Dashboard</h1>
+        <h1 style={styles.title}>Import Testing Dashboard - Date Filters</h1>
         <p style={styles.subtitle}>
-          Test individual GraphQL queries and debug the import process
+          Debug date filtering issues and test database insertion behavior
         </p>
       </div>
       
@@ -600,89 +664,65 @@ export default function ImportTest() {
         )}
       </div>
       
-      {/* Test All Orders Access */}
+      {/* Current Date Info */}
       <div style={styles.testSection}>
-        <h2 style={styles.sectionTitle}>🎉 Test Full Historical Access (read_all_orders)</h2>
-        <div style={styles.infoBox}>
-          You have the <strong>read_all_orders</strong> scope! This test will fetch ALL historical orders
-          without any date restrictions and show the oldest and newest orders.
-        </div>
-        <Form method="post">
-          <input type="hidden" name="_action" value="test-all-orders" />
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{
-              ...styles.button,
-              backgroundColor: '#10b981',
-              ...(isSubmitting ? styles.buttonDisabled : {})
-            }}
-          >
-            {isSubmitting ? 'Testing...' : 'Test Full Historical Access'}
-          </button>
-        </Form>
+        <h2 style={styles.sectionTitle}>📅 Date Reference</h2>
+        <table style={styles.summaryTable}>
+          <tbody>
+            <tr style={styles.summaryRow}>
+              <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Current Date:</td>
+              <td style={styles.summaryCell}>{new Date(currentDate).toLocaleString()}</td>
+            </tr>
+            <tr style={styles.summaryRow}>
+              <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>3 Months Ago:</td>
+              <td style={styles.summaryCell}>{presetDates.threeMonths} ({new Date(presetDates.threeMonths).toLocaleDateString()})</td>
+            </tr>
+            <tr style={styles.summaryRow}>
+              <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>6 Months Ago:</td>
+              <td style={styles.summaryCell}>{presetDates.sixMonths} ({new Date(presetDates.sixMonths).toLocaleDateString()})</td>
+            </tr>
+            <tr style={styles.summaryRow}>
+              <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>12 Months Ago:</td>
+              <td style={styles.summaryCell}>{presetDates.twelveMonths} ({new Date(presetDates.twelveMonths).toLocaleDateString()})</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
       
-      {/* Check Access Test */}
+      {/* Test Date Filtering */}
       <div style={styles.testSection}>
-        <h2 style={styles.sectionTitle}>Test 0: Check Order Access & Scopes</h2>
+        <h2 style={styles.sectionTitle}>Test 1: Date Filter Behavior</h2>
         <div style={styles.infoBox}>
-          This test will check what order access your app has and display the available scopes.
-          It will also attempt to fetch orders older than 2023.
+          This test will show exactly what orders Shopify returns for each date filter option.
+          It will also analyze if orders are within the expected date range.
         </div>
         <Form method="post">
-          <input type="hidden" name="_action" value="check-access" />
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{
-              ...styles.button,
-              ...(isSubmitting ? styles.buttonDisabled : {})
-            }}
-          >
-            {isSubmitting ? 'Checking...' : 'Check Access & Scopes'}
-          </button>
-        </Form>
-      </div>
-      
-      {/* Test Oldest Order */}
-      <div style={styles.testSection}>
-        <h2 style={styles.sectionTitle}>Test 1: Import Oldest Order</h2>
-        <div style={styles.infoBox}>
-          This test will fetch the oldest paid order from your store and attempt to import it.
-          It will show the GraphQL query, response, and any database operations.
-        </div>
-        <Form method="post">
-          <input type="hidden" name="_action" value="test-oldest" />
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{
-              ...styles.button,
-              ...(isSubmitting ? styles.buttonDisabled : {})
-            }}
-          >
-            {isSubmitting ? 'Testing...' : 'Import Oldest Order'}
-          </button>
-        </Form>
-      </div>
-      
-      {/* Test Date Range Query */}
-      <div style={styles.testSection}>
-        <h2 style={styles.sectionTitle}>Test 2: Query Orders by Date Range</h2>
-        <div style={styles.infoBox}>
-          Test the date range query to see what orders are returned for a specific date.
-          This helps verify if Shopify is returning historical orders correctly.
-        </div>
-        <Form method="post">
-          <input type="hidden" name="_action" value="test-date-range" />
+          <input type="hidden" name="_action" value="test-date-filter" />
+          
+          <select name="filterType" style={styles.select}>
+            <option value="3months">Last 3 Months</option>
+            <option value="6months">Last 6 Months</option>
+            <option value="12months">Last 12 Months</option>
+            <option value="custom">Custom Date</option>
+          </select>
+          
           <input
             type="date"
-            name="dateRange"
-            defaultValue={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+            name="customDate"
+            defaultValue={presetDates.threeMonths}
             style={styles.input}
-            disabled={isSubmitting}
           />
+          
+          <label style={{ marginRight: '16px' }}>
+            <input
+              type="checkbox"
+              name="testDatabase"
+              value="true"
+              style={styles.checkbox}
+            />
+            Test database insertion (first 5 orders)
+          </label>
+          
           <button
             type="submit"
             disabled={isSubmitting}
@@ -691,7 +731,58 @@ export default function ImportTest() {
               ...(isSubmitting ? styles.buttonDisabled : {})
             }}
           >
-            {isSubmitting ? 'Testing...' : 'Test Date Query'}
+            {isSubmitting ? 'Testing...' : 'Test Date Filter'}
+          </button>
+        </Form>
+      </div>
+      
+      {/* Test Query Formats */}
+      <div style={styles.testSection}>
+        <h2 style={styles.sectionTitle}>Test 2: Query Format Comparison</h2>
+        <div style={styles.infoBox}>
+          Tests different date query formats to identify which one works correctly with Shopify's API.
+        </div>
+        <Form method="post">
+          <input type="hidden" name="_action" value="test-query-formats" />
+          
+          <input
+            type="date"
+            name="startDate"
+            defaultValue={presetDates.threeMonths}
+            style={styles.input}
+          />
+          
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            style={{
+              ...styles.button,
+              ...(isSubmitting ? styles.buttonDisabled : {})
+            }}
+          >
+            {isSubmitting ? 'Testing...' : 'Test All Query Formats'}
+          </button>
+        </Form>
+      </div>
+      
+      {/* Clear Test Data */}
+      <div style={styles.testSection}>
+        <h2 style={styles.sectionTitle}>Test 3: Clear Recent Test Data</h2>
+        <div style={styles.infoBox}>
+          Remove test transactions created in the last hour to clean up after testing.
+        </div>
+        <Form method="post">
+          <input type="hidden" name="_action" value="clear-test-data" />
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            style={{
+              ...styles.button,
+              ...styles.buttonDanger,
+              ...(isSubmitting ? styles.buttonDisabled : {})
+            }}
+          >
+            {isSubmitting ? 'Clearing...' : 'Clear Test Data'}
           </button>
         </Form>
       </div>
@@ -715,6 +806,113 @@ export default function ImportTest() {
           
           {actionData.testResult && (
             <>
+              {actionData.testResult.queryString && (
+                <>
+                  <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
+                    Query String Used:
+                  </h3>
+                  <pre style={styles.codeBlock}>
+                    {actionData.testResult.queryString}
+                  </pre>
+                </>
+              )}
+              
+              {actionData.testResult.ordersSummary && (
+                <>
+                  <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
+                    Orders Analysis:
+                  </h3>
+                  <table style={styles.summaryTable}>
+                    <tbody>
+                      <tr style={styles.summaryRow}>
+                        <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Total Orders Returned:</td>
+                        <td style={styles.summaryCell}>{actionData.testResult.ordersSummary.totalOrders}</td>
+                      </tr>
+                      {actionData.testResult.ordersSummary.oldestOrder && (
+                        <tr style={styles.summaryRow}>
+                          <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Oldest Order:</td>
+                          <td style={styles.summaryCell}>
+                            {actionData.testResult.ordersSummary.oldestOrder.name} - {new Date(actionData.testResult.ordersSummary.oldestOrder.createdAt).toLocaleString()}
+                          </td>
+                        </tr>
+                      )}
+                      {actionData.testResult.ordersSummary.newestOrder && (
+                        <tr style={styles.summaryRow}>
+                          <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Newest Order:</td>
+                          <td style={styles.summaryCell}>
+                            {actionData.testResult.ordersSummary.newestOrder.name} - {new Date(actionData.testResult.ordersSummary.newestOrder.createdAt).toLocaleString()}
+                          </td>
+                        </tr>
+                      )}
+                      {actionData.testResult.ordersSummary.dateDistribution && (
+                        <>
+                          <tr style={styles.summaryRow}>
+                            <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Orders Within Date Range:</td>
+                            <td style={styles.summaryCell}>
+                              {actionData.testResult.ordersSummary.dateDistribution.withinRange}
+                              {actionData.testResult.ordersSummary.dateDistribution.withinRange === actionData.testResult.ordersSummary.totalOrders && 
+                                <span style={{ color: '#10b981', marginLeft: '8px' }}>✓ All orders are within range</span>
+                              }
+                            </td>
+                          </tr>
+                          <tr style={styles.summaryRow}>
+                            <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Orders Outside Date Range:</td>
+                            <td style={styles.summaryCell}>
+                              {actionData.testResult.ordersSummary.dateDistribution.outsideRange}
+                              {actionData.testResult.ordersSummary.dateDistribution.outsideRange > 0 && 
+                                <span style={{ color: '#ef4444', marginLeft: '8px' }}>⚠️ Orders outside expected range!</span>
+                              }
+                            </td>
+                          </tr>
+                        </>
+                      )}
+                    </tbody>
+                  </table>
+                  
+                  {actionData.testResult.ordersSummary.dateDistribution && actionData.testResult.ordersSummary.dateDistribution.outsideRange > 0 && (
+                    <div style={styles.warningMessage}>
+                      ⚠️ <strong>Date Filter Issue Detected:</strong> The query returned {actionData.testResult.ordersSummary.dateDistribution.outsideRange} orders 
+                      that are outside the expected date range. This suggests the Shopify query filter may not be working as expected.
+                    </div>
+                  )}
+                </>
+              )}
+              
+              {actionData.testResult.databaseTest && (
+                <>
+                  <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
+                    Database Test Results:
+                  </h3>
+                  <table style={styles.summaryTable}>
+                    <tbody>
+                      <tr style={styles.summaryRow}>
+                        <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Attempted Inserts:</td>
+                        <td style={styles.summaryCell}>{actionData.testResult.databaseTest.attemptedInserts}</td>
+                      </tr>
+                      <tr style={styles.summaryRow}>
+                        <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Successful Inserts:</td>
+                        <td style={styles.summaryCell}>{actionData.testResult.databaseTest.successfulInserts}</td>
+                      </tr>
+                      <tr style={styles.summaryRow}>
+                        <td style={{ ...styles.summaryCell, ...styles.summaryCellLabel }}>Skipped (Duplicates):</td>
+                        <td style={styles.summaryCell}>{actionData.testResult.databaseTest.skippedDuplicates}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  
+                  {actionData.testResult.databaseTest.errors.length > 0 && (
+                    <div style={styles.errorMessage}>
+                      <strong>Database Errors:</strong>
+                      <ul style={{ marginTop: '8px', marginLeft: '20px' }}>
+                        {actionData.testResult.databaseTest.errors.map((error, index) => (
+                          <li key={index}>{error}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+              
               <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
                 GraphQL Query:
               </h3>
@@ -734,78 +932,38 @@ export default function ImportTest() {
               )}
               
               <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
-                GraphQL Response:
+                Full GraphQL Response:
               </h3>
               <pre style={styles.codeBlock}>
                 {JSON.stringify(actionData.testResult.response, null, 2)}
               </pre>
-              
-              {actionData.testResult.processedOrder && (
-                <>
-                  <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
-                    Processed Order:
-                  </h3>
-                  <pre style={styles.codeBlock}>
-                    {JSON.stringify(actionData.testResult.processedOrder, null, 2)}
-                  </pre>
-                </>
-              )}
-              
-              {actionData.testResult.createdCustomer && (
-                <>
-                  <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
-                    Created/Updated Customer:
-                  </h3>
-                  <pre style={styles.codeBlock}>
-                    {JSON.stringify(actionData.testResult.createdCustomer, null, 2)}
-                  </pre>
-                </>
-              )}
-              
-              {actionData.testResult.createdTransaction && (
-                <>
-                  <h3 style={{ marginTop: '20px', marginBottom: '8px', fontWeight: '600' }}>
-                    Created Transaction:
-                  </h3>
-                  <pre style={styles.codeBlock}>
-                    {JSON.stringify(actionData.testResult.createdTransaction, null, 2)}
-                  </pre>
-                </>
-              )}
             </>
           )}
         </div>
       )}
       
-      {/* Debug Information */}
+      {/* Debugging Help */}
       <div style={styles.testSection}>
-        <h2 style={styles.sectionTitle}>Debug Information</h2>
+        <h2 style={styles.sectionTitle}>Common Date Filter Issues</h2>
+        <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
+          <li><strong>Shopify ignores date filters:</strong> This can happen if the query syntax is incorrect</li>
+          <li><strong>All orders returned:</strong> The API might default to all orders if the filter fails</li>
+          <li><strong>Timezone issues:</strong> Shopify uses UTC, ensure dates are properly formatted</li>
+          <li><strong>Query order matters:</strong> Try putting financial_status first or last</li>
+          <li><strong>Date format:</strong> ISO 8601 format (YYYY-MM-DD) is most reliable</li>
+        </ul>
+        
+        <h3 style={{ marginTop: '16px', marginBottom: '8px', fontWeight: '600' }}>
+          Recommended Solution:
+        </h3>
         <div style={styles.infoBox}>
-          <strong>Shop Domain:</strong> {shopDomain}<br />
-          <strong>Current Date:</strong> {new Date().toISOString()}<br />
-          <strong>Test Date (1 year ago):</strong> {new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()}
+          If date filtering isn't working correctly, the safest approach is to:
+          <ol style={{ marginLeft: '20px', marginTop: '8px' }}>
+            <li>Fetch all orders without date filter</li>
+            <li>Filter by date in your application code after fetching</li>
+            <li>This ensures accurate date filtering even if Shopify's query is unreliable</li>
+          </ol>
         </div>
-        
-        <h3 style={{ marginTop: '16px', marginBottom: '8px', fontWeight: '600' }}>
-          Common Issues:
-        </h3>
-        <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
-          <li><strong>No orders returned:</strong> Shopify may limit historical data access</li>
-          <li><strong>Empty customer field:</strong> Guest checkouts or deleted customers</li>
-          <li><strong>Date filtering not working:</strong> Check date format and timezone</li>
-          <li><strong>Financial status mismatch:</strong> Only 'PAID' orders are imported</li>
-          <li><strong>60-day limitation:</strong> Standard API access only provides last 60 days of orders</li>
-        </ul>
-        
-        <h3 style={{ marginTop: '16px', marginBottom: '8px', fontWeight: '600' }}>
-          Solutions for Historical Data:
-        </h3>
-        <ul style={{ marginLeft: '20px', lineHeight: '1.8', fontSize: '14px' }}>
-          <li><strong>Request read_all_orders scope:</strong> Gives access to all historical orders</li>
-          <li><strong>Export/Import CSV:</strong> Merchants can export orders and you can import the CSV</li>
-          <li><strong>Webhooks going forward:</strong> Set up webhooks to capture all future orders</li>
-          <li><strong>Partner API request:</strong> Contact Shopify for extended access if needed for your use case</li>
-        </ul>
       </div>
     </div>
   );
