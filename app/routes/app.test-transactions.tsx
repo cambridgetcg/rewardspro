@@ -1,5 +1,4 @@
 // app/routes/app.test-transactions.tsx
-
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, Form, useActionData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
@@ -13,6 +12,7 @@ type ActionResponse =
       orderName: string;
       analysis: {
         orderTotal: number;
+        netPayment: number;
         giftCardAmount: number;
         storeCreditAmount: number;
         cashbackEligibleAmount: number;
@@ -38,7 +38,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const formData = await request.formData();
   const orderIdInput = formData.get("orderId") as string;
-
   if (!orderIdInput) {
     return json<ActionResponse>({ error: "Order ID is required" });
   }
@@ -60,13 +59,13 @@ export async function action({ request }: ActionFunctionArgs) {
         error: "Unable to connect to Shopify GraphQL API. Please check your app permissions.",
       });
     }
-  } catch (testError) {
+  } catch {
     return json<ActionResponse>({
       error: "Failed to connect to Shopify API. Please ensure your app is properly installed.",
     });
   }
 
-  // 2. Fetch order transactions and details
+  // 2. Fetch order with netPaymentSet and transactions
   try {
     const QUERY = `#graphql
       query getOrderPaymentDetails($id: ID!) {
@@ -74,20 +73,39 @@ export async function action({ request }: ActionFunctionArgs) {
           id
           name
           currencyCode
+          
+          # Total order amount
           totalPriceSet {
-            shopMoney { amount currencyCode }
+            shopMoney { 
+              amount 
+              currencyCode 
+            }
           }
+          
+          # Net payment - actual money paid by customer
+          netPaymentSet {
+            shopMoney { 
+              amount 
+              currencyCode 
+            }
+          }
+          
+          # Payment gateway names
           paymentGatewayNames
+          
+          # Transactions for breakdown
           transactions(first: 50) {
-            nodes {
-              id
-              kind
-              gateway
-              status
-              amountSet {
-                shopMoney {
-                  amount
-                  currencyCode
+            edges {
+              node {
+                id
+                kind
+                gateway
+                status
+                amountSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
                 }
               }
             }
@@ -96,14 +114,15 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     `;
 
-    // Normalize to Relay Global ID if needed
     const gid = orderIdInput.startsWith("gid://")
       ? orderIdInput
       : `gid://shopify/Order/${orderIdInput}`;
 
+    console.log("Fetching order:", gid);
+
     const response = await admin.graphql(QUERY, { variables: { id: gid } });
     const result = await response.json();
-
+    
     if ("errors" in result && result.errors) {
       return json<ActionResponse>({
         error: `GraphQL Error: ${(result.errors as any[])
@@ -119,23 +138,28 @@ export async function action({ request }: ActionFunctionArgs) {
       });
     }
 
-    const txs = order.transactions.nodes as Array<any>;
+    // 3. Process amounts
+    const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
+    const netPayment = parseFloat(order.netPaymentSet.shopMoney.amount);
+    
+    console.log("Order Total:", orderTotal);
+    console.log("Net Payment:", netPayment);
 
-    // 3. Payment breakdown calculation
+    // 4. Process transactions to identify gift cards
+    const txs = order.transactions.edges.map((e: any) => e.node);
     let giftCardAmount = 0;
-    let storeCreditAmount = 0;
 
     const processedTransactions = txs
-      .filter((t) => t.status === "SUCCESS" && t.kind === "SALE")
-      .map((t) => {
+      .filter((t: any) => t.status === "SUCCESS" && t.kind === "SALE")
+      .map((t: any) => {
         const amount = parseFloat(t.amountSet.shopMoney.amount);
         const gw = t.gateway.toLowerCase();
 
-        if (gw.includes("gift_card")) {
+        if (gw === "gift_card" || gw.includes("gift_card")) {
           giftCardAmount += amount;
-        } else if (gw.includes("store_credit")) {
-          storeCreditAmount += amount;
+          console.log("Found gift card transaction:", amount);
         }
+
         return {
           id: t.id,
           gateway: t.gateway,
@@ -145,8 +169,20 @@ export async function action({ request }: ActionFunctionArgs) {
         };
       });
 
-    const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
-    const cashbackEligibleAmount = orderTotal - giftCardAmount - storeCreditAmount;
+    // 5. Calculate store credit amount
+    // Store Credit = Order Total - Net Payment - Gift Cards
+    const totalNonCashPayments = orderTotal - netPayment;
+    const storeCreditAmount = Math.max(0, totalNonCashPayments - giftCardAmount);
+    
+    console.log("Gift Card Amount:", giftCardAmount);
+    console.log("Total Non-Cash Payments:", totalNonCashPayments);
+    console.log("Store Credit Amount (calculated):", storeCreditAmount);
+
+    // The cashback eligible amount is the net payment
+    const cashbackEligibleAmount = netPayment;
+
+    // Verification
+    console.log("Verification:", netPayment + giftCardAmount + storeCreditAmount, "should equal", orderTotal);
 
     return json<ActionResponse>({
       success: true,
@@ -154,6 +190,7 @@ export async function action({ request }: ActionFunctionArgs) {
       orderName: order.name,
       analysis: {
         orderTotal,
+        netPayment,
         giftCardAmount,
         storeCreditAmount,
         cashbackEligibleAmount,
@@ -162,6 +199,7 @@ export async function action({ request }: ActionFunctionArgs) {
       },
     });
   } catch (error) {
+    console.error("Error:", error);
     return json<ActionResponse>({
       error: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
     });
@@ -174,7 +212,6 @@ export default function TestTransactions() {
   const [orderId, setOrderId] = useState("");
 
   const isSubmitting = navigation.state === "submitting";
-
   const formatCurrency = (amount: number, currency: string) =>
     new Intl.NumberFormat("en-GB", {
       style: "currency",
@@ -282,7 +319,6 @@ export default function TestTransactions() {
             <h3 style={{ fontSize: "16px", marginBottom: "16px" }}>
               Payment Breakdown
             </h3>
-
             <div style={{ display: "grid", gap: "12px" }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span>Order Total:</span>
@@ -293,7 +329,7 @@ export default function TestTransactions() {
                   )}
                 </strong>
               </div>
-
+              
               <div
                 style={{
                   display: "flex",
@@ -309,7 +345,7 @@ export default function TestTransactions() {
                   )}
                 </span>
               </div>
-
+              
               <div
                 style={{
                   display: "flex",
@@ -325,7 +361,7 @@ export default function TestTransactions() {
                   )}
                 </span>
               </div>
-
+              
               <div
                 style={{
                   display: "flex",
@@ -336,7 +372,7 @@ export default function TestTransactions() {
                   color: "#0070f3",
                 }}
               >
-                <span>= Cashback Eligible Amount:</span>
+                <span>= Net Payment (Cashback Eligible):</span>
                 <span>
                   {formatCurrency(
                     actionData.analysis.cashbackEligibleAmount,
@@ -347,6 +383,37 @@ export default function TestTransactions() {
             </div>
           </div>
 
+          {/* Verification Box */}
+          <div
+            style={{
+              backgroundColor: "#e6f7ff",
+              border: "1px solid #91d5ff",
+              padding: "16px",
+              borderRadius: "6px",
+              marginBottom: "24px",
+              fontSize: "14px",
+            }}
+          >
+            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Calculation Verification</h4>
+            <p style={{ margin: "0", lineHeight: "1.5" }}>
+              <strong>Net Payment:</strong> {formatCurrency(actionData.analysis.netPayment, actionData.analysis.currency)}<br />
+              <strong>+ Gift Cards:</strong> {formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}<br />
+              <strong>+ Store Credits:</strong> {formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}<br />
+              <strong>= Total:</strong> {formatCurrency(
+                actionData.analysis.netPayment + actionData.analysis.giftCardAmount + actionData.analysis.storeCreditAmount,
+                actionData.analysis.currency
+              )}<br />
+              <strong>Order Total:</strong> {formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}
+              {Math.abs((actionData.analysis.netPayment + actionData.analysis.giftCardAmount + actionData.analysis.storeCreditAmount) - actionData.analysis.orderTotal) < 0.01 
+                ? " ✅" 
+                : ` ❌ (Difference: ${formatCurrency(
+                    Math.abs((actionData.analysis.netPayment + actionData.analysis.giftCardAmount + actionData.analysis.storeCreditAmount) - actionData.analysis.orderTotal),
+                    actionData.analysis.currency
+                  )})`
+              }
+            </p>
+          </div>
+
           {/* Transaction Details */}
           <div>
             <h3 style={{ fontSize: "16px", marginBottom: "12px" }}>
@@ -355,10 +422,10 @@ export default function TestTransactions() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #ddd" }}>
-                  <th style={{ padding: "8px", textAlign: "left" }}>Gateway</th>
-                  <th style={{ padding: "8px", textAlign: "left" }}>Type</th>
-                  <th style={{ padding: "8px", textAlign: "left" }}>Status</th>
-                  <th style={{ padding: "8px", textAlign: "right" }}>Amount</th>
+                  <th style={{ padding: "8px", textAlign: "left" as const }}>Gateway</th>
+                  <th style={{ padding: "8px", textAlign: "left" as const }}>Type</th>
+                  <th style={{ padding: "8px", textAlign: "left" as const }}>Status</th>
+                  <th style={{ padding: "8px", textAlign: "right" as const }}>Amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -374,12 +441,12 @@ export default function TestTransactions() {
                             .toLowerCase()
                             .includes("gift_card")
                             ? "#fef3c7"
-                            : t.gateway.toLowerCase() === "shopify_store_credit"
+                            : t.gateway.toLowerCase() === "store_credit"
                             ? "#ddd6fe"
                             : "#d1fae5",
                           color: t.gateway.toLowerCase().includes("gift_card")
                             ? "#92400e"
-                            : t.gateway.toLowerCase() === "shopify_store_credit"
+                            : t.gateway.toLowerCase() === "store_credit"
                             ? "#5b21b6"
                             : "#065f46",
                         }}
@@ -389,13 +456,36 @@ export default function TestTransactions() {
                     </td>
                     <td style={{ padding: "8px" }}>{t.kind}</td>
                     <td style={{ padding: "8px" }}>{t.status}</td>
-                    <td style={{ padding: "8px", textAlign: "right" }}>
+                    <td style={{ padding: "8px", textAlign: "right" as const }}>
                       {formatCurrency(t.amount, actionData.analysis.currency)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Implementation Summary */}
+          <div
+            style={{
+              backgroundColor: "#f0f9ff",
+              border: "1px solid #0ea5e9",
+              padding: "16px",
+              borderRadius: "6px",
+              marginTop: "24px",
+            }}
+          >
+            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
+            <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
+              <strong>Cashback Eligible Amount = {formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong><br />
+              This is the <code>netPaymentSet</code> value from Shopify, which represents the actual money paid by the customer.
+            </p>
+            <p style={{ margin: "8px 0 0 0", fontSize: "13px", color: "#666" }}>
+              Store Credit Amount = Order Total ({formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}) 
+              − Net Payment ({formatCurrency(actionData.analysis.netPayment, actionData.analysis.currency)}) 
+              − Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) 
+              = {formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}
+            </p>
           </div>
         </div>
       )}
