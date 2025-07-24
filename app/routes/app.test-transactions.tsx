@@ -95,18 +95,14 @@ export async function action({ request }: ActionFunctionArgs) {
           
           # Transactions for breakdown
           transactions(first: 50) {
-            edges {
-              node {
-                id
-                kind
-                gateway
-                status
-                amountSet {
-                  shopMoney {
-                    amount
-                    currencyCode
-                  }
-                }
+            id
+            kind
+            gateway
+            status
+            amountSet {
+              shopMoney {
+                amount
+                currencyCode
               }
             }
           }
@@ -146,10 +142,10 @@ export async function action({ request }: ActionFunctionArgs) {
     console.log("Net Payment:", netPayment);
 
     // 4. Process transactions to identify gift cards
-    const txs = order.transactions.edges.map((e: any) => e.node);
+    const transactions = order.transactions || [];
     let giftCardAmount = 0;
 
-    const processedTransactions = txs
+    const processedTransactions = transactions
       .filter((t: any) => t.status === "SUCCESS" && t.kind === "SALE")
       .map((t: any) => {
         const amount = parseFloat(t.amountSet.shopMoney.amount);
