@@ -88,16 +88,16 @@ export async function action({ request }: ActionFunctionArgs) {
             }
           }
           
-          # Total discounts (might include store credits)
-          totalDiscountsSet {
+          # Net payment (actual money paid by customer)
+          netPaymentSet {
             shopMoney {
               amount
               currencyCode
             }
           }
           
-          # Current totals (after refunds)
-          currentTotalPriceSet {
+          # Total discounts (might include store credits)
+          totalDiscountsSet {
             shopMoney {
               amount
               currencyCode
@@ -107,7 +107,7 @@ export async function action({ request }: ActionFunctionArgs) {
           # Payment gateway names (helpful for identification)
           paymentGatewayNames
           
-          # Transactions - the key data for payment breakdown
+          # Transactions - for breakdown visibility
           transactions(first: 50) {
             id
             kind
@@ -150,16 +150,26 @@ export async function action({ request }: ActionFunctionArgs) {
     const order = result.data.order;
     const transactions = order.transactions || [];
     
-    // Calculate payment breakdown using SUBTRACTION method
-    let giftCardAmount = 0;
-    let storeCreditAmount = 0;
+    // Calculate payment breakdown using NET PAYMENT method
+    const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
+    const netPayment = parseFloat(order.netPaymentSet.shopMoney.amount);
     const totalDiscounts = parseFloat(order.totalDiscountsSet?.shopMoney?.amount || "0");
     
-    console.log("\n=== CASHBACK CALCULATION (SUBTRACTION METHOD) ===");
-    console.log(`Order Total: ${order.totalPriceSet.shopMoney.amount} ${order.currencyCode}`);
-    console.log(`Total Discounts Applied: ${totalDiscounts} ${order.currencyCode}`);
+    console.log("\n=== CASHBACK CALCULATION (NET PAYMENT METHOD) ===");
+    console.log(`Order Total: ${orderTotal} ${order.currencyCode}`);
+    console.log(`Net Payment (actual money paid): ${netPayment} ${order.currencyCode}`);
+    console.log(`Total Discounts: ${totalDiscounts} ${order.currencyCode}`);
     console.log(`Payment Gateways: ${order.paymentGatewayNames?.join(', ') || 'none'}`);
-    console.log(`\nIdentifying non-cashback eligible transactions:`);
+    
+    // The cashback eligible amount is simply the net payment
+    // Net payment already excludes gift cards and store credits
+    const cashbackEligibleAmount = netPayment;
+    
+    // Process transactions just for visibility
+    let giftCardAmount = 0;
+    let storeCreditAmount = 0;
+    
+    console.log(`\nTransaction breakdown for reference:`);
     
     const processedTransactions = transactions
       .filter((t: any) => {
@@ -172,16 +182,11 @@ export async function action({ request }: ActionFunctionArgs) {
         const gateway = t.gateway.toLowerCase();
         const originalGateway = t.gateway;
         
-        console.log(`\nTransaction: ${originalGateway}`);
-        console.log(`  Amount: ${amount} ${t.amountSet.shopMoney.currencyCode}`);
+        console.log(`Transaction: ${originalGateway} - Amount: ${amount}`);
         
-        // Only identify and sum gift cards
+        // Track gift cards and store credits for display
         if (gateway === 'gift_card' || gateway.includes('gift_card')) {
           giftCardAmount += amount;
-          console.log(`  → Identified as GIFT CARD (excluded from cashback)`);
-        } else {
-          console.log(`  → Regular payment (${originalGateway}) - eligible for cashback`);
-          console.log(`  → Gateway exact value: "${gateway}"`);
         }
         
         return {
@@ -193,20 +198,17 @@ export async function action({ request }: ActionFunctionArgs) {
         };
       });
     
-    // Store credits might be in totalDiscountsSet instead of transactions
-    // For now, we'll use totalDiscounts as a proxy for store credits if no store credit transactions found
-    storeCreditAmount = totalDiscounts;
-    
-    // Calculate using subtraction
-    const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
-    const cashbackEligibleAmount = orderTotal - giftCardAmount - storeCreditAmount;
+    // Calculate implied store credit from the difference
+    const impliedNonCashPayments = orderTotal - netPayment;
+    storeCreditAmount = impliedNonCashPayments - giftCardAmount;
     
     console.log("\n=== FINAL CALCULATION ===");
     console.log(`Order Total: ${orderTotal} ${order.currencyCode}`);
-    console.log(`- Gift Cards: ${giftCardAmount} ${order.currencyCode}`);
-    console.log(`- Store Credits/Discounts: ${storeCreditAmount} ${order.currencyCode}`);
-    console.log(`= Cashback Eligible: ${cashbackEligibleAmount} ${order.currencyCode}`);
-    console.log("\nNote: Store credits are included in total discounts");
+    console.log(`Net Payment (Cashback Eligible): ${netPayment} ${order.currencyCode}`);
+    console.log(`\nBreakdown (for reference):`);
+    console.log(`- Gift Cards identified: ${giftCardAmount} ${order.currencyCode}`);
+    console.log(`- Store Credits/Other non-cash: ${storeCreditAmount} ${order.currencyCode}`);
+    console.log(`- Total non-cash payments: ${impliedNonCashPayments} ${order.currencyCode}`);
     console.log("========================\n");
     
     return json<ActionResponse>({
@@ -216,8 +218,8 @@ export async function action({ request }: ActionFunctionArgs) {
       analysis: {
         orderTotal,
         giftCardAmount,
-        storeCreditAmount: totalDiscounts, // Using totalDiscounts as it includes store credits
-        cashbackEligibleAmount,
+        storeCreditAmount,
+        cashbackEligibleAmount: netPayment, // Net payment is the cashback eligible amount
         currency: order.currencyCode,
         transactions: processedTransactions
       }
@@ -349,7 +351,7 @@ export default function TestTransactions() {
               </div>
               
               <div style={{ display: "flex", justifyContent: "space-between", color: "#666" }}>
-                <span>− Store Credits:</span>
+                <span>− Store Credits/Discounts:</span>
                 <span>{formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</span>
               </div>
               
@@ -417,9 +419,10 @@ export default function TestTransactions() {
             <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
             <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
               For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>.
-              This is calculated as: Order Total ({formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}) 
-              minus Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) 
-              minus Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}).
+              This is the <strong>net payment amount</strong> - the actual money paid by the customer after excluding gift cards, store credits, and other non-monetary payments.
+            </p>
+            <p style={{ margin: "8px 0 0 0", fontSize: "13px", color: "#666" }}>
+              <strong>Simple rule:</strong> Use the <code>netPaymentSet</code> field from Shopify's Order API as the cashback eligible amount.
             </p>
           </div>
           
