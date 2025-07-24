@@ -33,13 +33,42 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   
   const formData = await request.formData();
   const orderId = formData.get("orderId") as string;
   
   if (!orderId) {
     return json<ActionResponse>({ error: "Order ID is required" });
+  }
+  
+  // First, let's test if we can make any GraphQL query
+  try {
+    console.log("Testing GraphQL connection for shop:", session.shop);
+    
+    const testQuery = `#graphql
+      query testConnection {
+        shop {
+          name
+          currencyCode
+        }
+      }
+    `;
+    
+    const testResponse = await admin.graphql(testQuery);
+    const testResult = await testResponse.json();
+    console.log("Test query result:", testResult);
+    
+    if (!('data' in testResult) || !testResult.data?.shop) {
+      return json<ActionResponse>({ 
+        error: "Unable to connect to Shopify GraphQL API. Please check your app permissions." 
+      });
+    }
+  } catch (testError) {
+    console.error("GraphQL connection test failed:", testError);
+    return json<ActionResponse>({ 
+      error: "Failed to connect to Shopify API. Please ensure your app is properly installed." 
+    });
   }
   
   try {
@@ -80,11 +109,26 @@ export async function action({ request }: ActionFunctionArgs) {
     `;
     
     const gid = orderId.startsWith('gid://') ? orderId : `gid://shopify/Order/${orderId}`;
+    console.log("Attempting to fetch order with ID:", gid);
+    
     const response = await admin.graphql(query, { variables: { id: gid } });
     const result = await response.json();
     
-    if (!result.data?.order) {
-      return json<ActionResponse>({ error: "Order not found" });
+    console.log("GraphQL Response:", JSON.stringify(result, null, 2));
+    
+    // Check for GraphQL errors
+    if ('errors' in result && result.errors) {
+      console.error("GraphQL Errors:", result.errors);
+      return json<ActionResponse>({ 
+        error: `GraphQL Error: ${(result.errors as any[]).map((e: any) => e.message).join(', ')}` 
+      });
+    }
+    
+    if (!('data' in result) || !result.data?.order) {
+      console.error("No order data in response:", result);
+      return json<ActionResponse>({ 
+        error: "Order not found. Please check the order ID and ensure your app has the necessary permissions." 
+      });
     }
     
     const order = result.data.order;
@@ -137,9 +181,9 @@ export async function action({ request }: ActionFunctionArgs) {
     });
     
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error in action:", error);
     return json<ActionResponse>({
-      error: error instanceof Error ? error.message : "Failed to fetch order"
+      error: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`
     });
   }
 }
@@ -163,6 +207,26 @@ export default function TestTransactions() {
       <h1 style={{ fontSize: "24px", marginBottom: "24px" }}>
         Cashback Transaction Test
       </h1>
+      
+      <div style={{
+        backgroundColor: "#f0f9ff",
+        border: "1px solid #0ea5e9",
+        padding: "16px",
+        borderRadius: "6px",
+        marginBottom: "24px",
+        fontSize: "14px"
+      }}>
+        <strong>How to find an Order ID:</strong>
+        <ol style={{ marginTop: "8px", marginBottom: "0", paddingLeft: "20px" }}>
+          <li>Go to your Shopify Admin → Orders</li>
+          <li>Click on any order</li>
+          <li>The Order ID is in the URL: /admin/orders/<strong>1234567890</strong></li>
+          <li>Or use the order number without the # (e.g., "1001" instead of "#1001")</li>
+        </ol>
+        <p style={{ marginTop: "12px", marginBottom: "0" }}>
+          <strong>Required permissions:</strong> Your app needs <code>read_orders</code> access scope.
+        </p>
+      </div>
       
       <Form method="post" style={{ marginBottom: "32px" }}>
         <div style={{ marginBottom: "16px" }}>
