@@ -134,24 +134,19 @@ export async function action({ request }: ActionFunctionArgs) {
     const order = result.data.order;
     const transactions = order.transactions || [];
     
-    // Calculate payment breakdown using subtraction method
+    // Calculate payment breakdown using SUBTRACTION method
     let giftCardAmount = 0;
     let storeCreditAmount = 0;
     
-    console.log("\n=== PAYMENT CALCULATION BREAKDOWN ===");
+    console.log("\n=== CASHBACK CALCULATION (SUBTRACTION METHOD) ===");
     console.log(`Order Total: ${order.totalPriceSet.shopMoney.amount} ${order.currencyCode}`);
-    console.log(`Total Transactions: ${transactions.length}`);
-    console.log("\nProcessing transactions:");
+    console.log(`Payment Gateways: ${order.paymentGatewayNames?.join(', ') || 'none'}`);
+    console.log(`\nIdentifying non-cashback eligible transactions:`);
     
-    // Only look for gift cards and store credits
     const processedTransactions = transactions
       .filter((t: any) => {
         const isSuccessful = t.status === 'SUCCESS';
         const isSale = t.kind === 'SALE';
-        console.log(`\nTransaction ${t.id}:`);
-        console.log(`  Status: ${t.status} (Success: ${isSuccessful})`);
-        console.log(`  Kind: ${t.kind} (Sale: ${isSale})`);
-        console.log(`  Include in calculation: ${isSuccessful && isSale}`);
         return isSuccessful && isSale;
       })
       .map((t: any) => {
@@ -159,21 +154,18 @@ export async function action({ request }: ActionFunctionArgs) {
         const gateway = t.gateway.toLowerCase();
         const originalGateway = t.gateway;
         
-        console.log(`\nProcessing Transaction:`);
-        console.log(`  Gateway: "${originalGateway}" (lowercase: "${gateway}")`);
+        console.log(`\nTransaction: ${originalGateway}`);
         console.log(`  Amount: ${amount} ${t.amountSet.shopMoney.currencyCode}`);
         
-        // Only identify gift cards and store credits
+        // Only identify and sum gift cards and store credits
         if (gateway === 'gift_card' || gateway.includes('gift_card')) {
           giftCardAmount += amount;
-          console.log(`  → Identified as GIFT CARD`);
-          console.log(`  → Gift card total now: ${giftCardAmount}`);
+          console.log(`  → Identified as GIFT CARD (excluded from cashback)`);
         } else if (gateway === 'store_credit') {
           storeCreditAmount += amount;
-          console.log(`  → Identified as STORE CREDIT`);
-          console.log(`  → Store credit total now: ${storeCreditAmount}`);
+          console.log(`  → Identified as STORE CREDIT (excluded from cashback)`);
         } else {
-          console.log(`  → Regular payment method (${originalGateway})`);
+          console.log(`  → Regular payment (${originalGateway}) - eligible for cashback`);
         }
         
         return {
@@ -185,17 +177,16 @@ export async function action({ request }: ActionFunctionArgs) {
         };
       });
     
-    // Calculate using subtraction method
+    // Calculate using subtraction
     const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
     const cashbackEligibleAmount = orderTotal - giftCardAmount - storeCreditAmount;
     
-    console.log("\n=== FINAL CALCULATION SUMMARY ===");
-    console.log(`Order Total: ${orderTotal}`);
-    console.log(`- Gift Card Amount: ${giftCardAmount}`);
-    console.log(`- Store Credit Amount: ${storeCreditAmount}`);
-    console.log(`= Cashback Eligible Amount: ${cashbackEligibleAmount}`);
-    console.log(`\nVerification: ${orderTotal} - ${giftCardAmount} - ${storeCreditAmount} = ${cashbackEligibleAmount}`);
-    console.log("================================\n");
+    console.log("\n=== FINAL CALCULATION ===");
+    console.log(`Order Total: ${orderTotal} ${order.currencyCode}`);
+    console.log(`- Gift Cards: ${giftCardAmount} ${order.currencyCode}`);
+    console.log(`- Store Credits: ${storeCreditAmount} ${order.currencyCode}`);
+    console.log(`= Cashback Eligible: ${cashbackEligibleAmount} ${order.currencyCode}`);
+    console.log("========================\n");
     
     return json<ActionResponse>({
       success: true,
@@ -329,57 +320,15 @@ export default function TestTransactions() {
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span>Order Total:</span>
                 <strong>{formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}</strong>
-              {/* Summary for Implementation */}
-          <div style={{
-            backgroundColor: "#e6f7ff",
-            border: "1px solid #91d5ff",
-            padding: "16px",
-            borderRadius: "6px",
-            marginTop: "24px"
-          }}>
-            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
-            <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
-              For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>, 
-              which excludes gift card payments ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) 
-              and store credit payments ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}).
-            </p>
-          </div>
-          
-          {/* Debug Information */}
-          <div style={{
-            backgroundColor: "#f9fafb",
-            border: "1px solid #e5e7eb",
-            padding: "16px",
-            borderRadius: "6px",
-            marginTop: "24px",
-            fontSize: "13px"
-          }}>
-            <h4 style={{ margin: "0 0 12px 0", fontSize: "14px" }}>Debug Information</h4>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Order ID:</strong> {actionData.orderId}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Total Transactions Found:</strong> {actionData.analysis.transactions.length}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Calculation Method:</strong><br />
-              Order Total ({formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}) − 
-              Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) − 
-              Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}) = 
-              Cashback Eligible ({formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)})
-            </p>
-            <p style={{ margin: "4px 0", color: "#dc2626" }}>
-              <strong>Check your browser console for detailed calculation logs!</strong>
-            </p>
-          </div>
+              </div>
               
               <div style={{ display: "flex", justifyContent: "space-between", color: "#666" }}>
-                <span>- Gift Cards:</span>
+                <span>− Gift Cards:</span>
                 <span>{formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}</span>
               </div>
               
               <div style={{ display: "flex", justifyContent: "space-between", color: "#666" }}>
-                <span>- Store Credits:</span>
+                <span>− Store Credits:</span>
                 <span>{formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</span>
               </div>
               
@@ -391,7 +340,7 @@ export default function TestTransactions() {
                 fontWeight: "bold",
                 color: "#0070f3"
               }}>
-                <span>Cashback Eligible Amount:</span>
+                <span>= Cashback Eligible Amount:</span>
                 <span>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</span>
               </div>
             </div>
@@ -417,10 +366,10 @@ export default function TestTransactions() {
                         padding: "2px 8px",
                         borderRadius: "4px",
                         fontSize: "14px",
-                        backgroundColor: t.gateway.includes('gift') ? '#fef3c7' : 
-                                       t.gateway.includes('credit') ? '#ddd6fe' : '#d1fae5',
-                        color: t.gateway.includes('gift') ? '#92400e' : 
-                               t.gateway.includes('credit') ? '#5b21b6' : '#065f46'
+                        backgroundColor: t.gateway.toLowerCase().includes('gift_card') ? '#fef3c7' : 
+                                       t.gateway.toLowerCase() === 'store_credit' ? '#ddd6fe' : '#d1fae5',
+                        color: t.gateway.toLowerCase().includes('gift_card') ? '#92400e' : 
+                               t.gateway.toLowerCase() === 'store_credit' ? '#5b21b6' : '#065f46'
                       }}>
                         {t.gateway}
                       </span>
@@ -436,36 +385,34 @@ export default function TestTransactions() {
             </table>
           </div>
           
-          {/* Debug Information */}
+          {/* Summary for Implementation */}
+          <div style={{
+            backgroundColor: "#e6f7ff",
+            border: "1px solid #91d5ff",
+            padding: "16px",
+            borderRadius: "6px",
+            marginTop: "24px"
+          }}>
+            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
+            <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
+              For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>.
+              This is calculated as: Order Total ({formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}) 
+              minus Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) 
+              minus Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}).
+            </p>
+          </div>
+          
+          {/* Debug Info */}
           <div style={{
             backgroundColor: "#f9fafb",
             border: "1px solid #e5e7eb",
             padding: "16px",
             borderRadius: "6px",
-            marginTop: "24px",
+            marginTop: "16px",
             fontSize: "13px"
           }}>
-            <h4 style={{ margin: "0 0 12px 0", fontSize: "14px" }}>Debug Information</h4>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Order ID:</strong> {actionData.orderId}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Total Transactions Found:</strong> {actionData.analysis.transactions.length}
-            </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Calculation:</strong><br />
-              Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) + 
-              Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}) + 
-              Regular Payments ({formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}) = 
-              {formatCurrency(
-                actionData.analysis.giftCardAmount + 
-                actionData.analysis.storeCreditAmount + 
-                actionData.analysis.cashbackEligibleAmount, 
-                actionData.analysis.currency
-              )}
-            </p>
-            <p style={{ margin: "4px 0", color: "#dc2626" }}>
-              <strong>Check your browser console for detailed calculation logs!</strong>
+            <p style={{ margin: "0", color: "#dc2626", fontWeight: "600" }}>
+              💡 Check your browser console for detailed calculation logs!
             </p>
           </div>
         </div>
