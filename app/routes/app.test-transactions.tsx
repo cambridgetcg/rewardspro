@@ -139,19 +139,43 @@ export async function action({ request }: ActionFunctionArgs) {
     let storeCreditAmount = 0;
     let regularPaymentAmount = 0;
     
+    console.log("\n=== PAYMENT CALCULATION BREAKDOWN ===");
+    console.log(`Order Total: ${order.totalPriceSet.shopMoney.amount} ${order.currencyCode}`);
+    console.log(`Total Transactions: ${transactions.length}`);
+    console.log("\nProcessing transactions:");
+    
     const processedTransactions = transactions
-      .filter((t: any) => t.status === 'SUCCESS' && t.kind === 'SALE')
+      .filter((t: any) => {
+        const isSuccessful = t.status === 'SUCCESS';
+        const isSale = t.kind === 'SALE';
+        console.log(`\nTransaction ${t.id}:`);
+        console.log(`  Status: ${t.status} (Success: ${isSuccessful})`);
+        console.log(`  Kind: ${t.kind} (Sale: ${isSale})`);
+        console.log(`  Include in calculation: ${isSuccessful && isSale}`);
+        return isSuccessful && isSale;
+      })
       .map((t: any) => {
         const amount = parseFloat(t.amountSet.shopMoney.amount);
         const gateway = t.gateway.toLowerCase();
+        const originalGateway = t.gateway;
+        
+        console.log(`\nProcessing Transaction:`);
+        console.log(`  Gateway: "${originalGateway}" (lowercase: "${gateway}")`);
+        console.log(`  Amount: ${amount} ${t.amountSet.shopMoney.currencyCode}`);
         
         // Identify payment type
         if (gateway === 'gift_card' || gateway.includes('gift')) {
           giftCardAmount += amount;
+          console.log(`  → Identified as GIFT CARD`);
+          console.log(`  → Gift card total now: ${giftCardAmount}`);
         } else if (gateway === 'store_credit' || gateway.includes('credit')) {
           storeCreditAmount += amount;
+          console.log(`  → Identified as STORE CREDIT`);
+          console.log(`  → Store credit total now: ${storeCreditAmount}`);
         } else {
           regularPaymentAmount += amount;
+          console.log(`  → Identified as REGULAR PAYMENT`);
+          console.log(`  → Regular payment total now: ${regularPaymentAmount}`);
         }
         
         return {
@@ -165,6 +189,17 @@ export async function action({ request }: ActionFunctionArgs) {
     
     const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
     const cashbackEligibleAmount = regularPaymentAmount;
+    
+    console.log("\n=== FINAL CALCULATION SUMMARY ===");
+    console.log(`Order Total: ${orderTotal}`);
+    console.log(`Gift Card Amount: ${giftCardAmount}`);
+    console.log(`Store Credit Amount: ${storeCreditAmount}`);
+    console.log(`Regular Payment Amount: ${regularPaymentAmount}`);
+    console.log(`Cashback Eligible Amount: ${cashbackEligibleAmount}`);
+    console.log(`\nVerification: ${giftCardAmount} + ${storeCreditAmount} + ${regularPaymentAmount} = ${giftCardAmount + storeCreditAmount + regularPaymentAmount}`);
+    console.log(`Should equal order total: ${orderTotal}`);
+    console.log(`Difference: ${Math.abs(orderTotal - (giftCardAmount + storeCreditAmount + regularPaymentAmount))}`);
+    console.log("================================\n");
     
     return json<ActionResponse>({
       success: true,
@@ -298,7 +333,54 @@ export default function TestTransactions() {
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span>Order Total:</span>
                 <strong>{formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}</strong>
-              </div>
+              {/* Summary for Implementation */}
+          <div style={{
+            backgroundColor: "#e6f7ff",
+            border: "1px solid #91d5ff",
+            padding: "16px",
+            borderRadius: "6px",
+            marginTop: "24px"
+          }}>
+            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
+            <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
+              For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>, 
+              which excludes gift card payments ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) 
+              and store credit payments ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}).
+            </p>
+          </div>
+          
+          {/* Debug Information */}
+          <div style={{
+            backgroundColor: "#f9fafb",
+            border: "1px solid #e5e7eb",
+            padding: "16px",
+            borderRadius: "6px",
+            marginTop: "24px",
+            fontSize: "13px"
+          }}>
+            <h4 style={{ margin: "0 0 12px 0", fontSize: "14px" }}>Debug Information</h4>
+            <p style={{ margin: "4px 0" }}>
+              <strong>Order ID:</strong> {actionData.orderId}
+            </p>
+            <p style={{ margin: "4px 0" }}>
+              <strong>Total Transactions Found:</strong> {actionData.analysis.transactions.length}
+            </p>
+            <p style={{ margin: "4px 0" }}>
+              <strong>Calculation:</strong><br />
+              Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) + 
+              Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}) + 
+              Regular Payments ({formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}) = 
+              {formatCurrency(
+                actionData.analysis.giftCardAmount + 
+                actionData.analysis.storeCreditAmount + 
+                actionData.analysis.cashbackEligibleAmount, 
+                actionData.analysis.currency
+              )}
+            </p>
+            <p style={{ margin: "4px 0", color: "#dc2626" }}>
+              <strong>Check your browser console for detailed calculation logs!</strong>
+            </p>
+          </div>
               
               <div style={{ display: "flex", justifyContent: "space-between", color: "#666" }}>
                 <span>- Gift Cards:</span>
@@ -363,19 +445,36 @@ export default function TestTransactions() {
             </table>
           </div>
           
-          {/* Summary for Implementation */}
+          {/* Debug Information */}
           <div style={{
-            backgroundColor: "#e6f7ff",
-            border: "1px solid #91d5ff",
+            backgroundColor: "#f9fafb",
+            border: "1px solid #e5e7eb",
             padding: "16px",
             borderRadius: "6px",
-            marginTop: "24px"
+            marginTop: "24px",
+            fontSize: "13px"
           }}>
-            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
-            <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
-              For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>, 
-              which excludes gift card payments ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) 
-              and store credit payments ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}).
+            <h4 style={{ margin: "0 0 12px 0", fontSize: "14px" }}>Debug Information</h4>
+            <p style={{ margin: "4px 0" }}>
+              <strong>Order ID:</strong> {actionData.orderId}
+            </p>
+            <p style={{ margin: "4px 0" }}>
+              <strong>Total Transactions Found:</strong> {actionData.analysis.transactions.length}
+            </p>
+            <p style={{ margin: "4px 0" }}>
+              <strong>Calculation:</strong><br />
+              Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) + 
+              Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}) + 
+              Regular Payments ({formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}) = 
+              {formatCurrency(
+                actionData.analysis.giftCardAmount + 
+                actionData.analysis.storeCreditAmount + 
+                actionData.analysis.cashbackEligibleAmount, 
+                actionData.analysis.currency
+              )}
+            </p>
+            <p style={{ margin: "4px 0", color: "#dc2626" }}>
+              <strong>Check your browser console for detailed calculation logs!</strong>
             </p>
           </div>
         </div>
