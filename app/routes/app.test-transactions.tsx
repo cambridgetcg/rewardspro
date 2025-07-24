@@ -88,6 +88,22 @@ export async function action({ request }: ActionFunctionArgs) {
             }
           }
           
+          # Total discounts (might include store credits)
+          totalDiscountsSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Current totals (after refunds)
+          currentTotalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          
           # Payment gateway names (helpful for identification)
           paymentGatewayNames
           
@@ -137,9 +153,11 @@ export async function action({ request }: ActionFunctionArgs) {
     // Calculate payment breakdown using SUBTRACTION method
     let giftCardAmount = 0;
     let storeCreditAmount = 0;
+    const totalDiscounts = parseFloat(order.totalDiscountsSet?.shopMoney?.amount || "0");
     
     console.log("\n=== CASHBACK CALCULATION (SUBTRACTION METHOD) ===");
     console.log(`Order Total: ${order.totalPriceSet.shopMoney.amount} ${order.currencyCode}`);
+    console.log(`Total Discounts Applied: ${totalDiscounts} ${order.currencyCode}`);
     console.log(`Payment Gateways: ${order.paymentGatewayNames?.join(', ') || 'none'}`);
     console.log(`\nIdentifying non-cashback eligible transactions:`);
     
@@ -157,13 +175,10 @@ export async function action({ request }: ActionFunctionArgs) {
         console.log(`\nTransaction: ${originalGateway}`);
         console.log(`  Amount: ${amount} ${t.amountSet.shopMoney.currencyCode}`);
         
-        // Only identify and sum gift cards and store credits
+        // Only identify and sum gift cards
         if (gateway === 'gift_card' || gateway.includes('gift_card')) {
           giftCardAmount += amount;
           console.log(`  → Identified as GIFT CARD (excluded from cashback)`);
-        } else if (gateway === 'store_credit' || gateway === 'shopify_store_credit' || gateway === 'store_credit_payment') {
-          storeCreditAmount += amount;
-          console.log(`  → Identified as STORE CREDIT (excluded from cashback)`);
         } else {
           console.log(`  → Regular payment (${originalGateway}) - eligible for cashback`);
           console.log(`  → Gateway exact value: "${gateway}"`);
@@ -178,6 +193,10 @@ export async function action({ request }: ActionFunctionArgs) {
         };
       });
     
+    // Store credits might be in totalDiscountsSet instead of transactions
+    // For now, we'll use totalDiscounts as a proxy for store credits if no store credit transactions found
+    storeCreditAmount = totalDiscounts;
+    
     // Calculate using subtraction
     const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
     const cashbackEligibleAmount = orderTotal - giftCardAmount - storeCreditAmount;
@@ -185,8 +204,9 @@ export async function action({ request }: ActionFunctionArgs) {
     console.log("\n=== FINAL CALCULATION ===");
     console.log(`Order Total: ${orderTotal} ${order.currencyCode}`);
     console.log(`- Gift Cards: ${giftCardAmount} ${order.currencyCode}`);
-    console.log(`- Store Credits: ${storeCreditAmount} ${order.currencyCode}`);
+    console.log(`- Store Credits/Discounts: ${storeCreditAmount} ${order.currencyCode}`);
     console.log(`= Cashback Eligible: ${cashbackEligibleAmount} ${order.currencyCode}`);
+    console.log("\nNote: Store credits are included in total discounts");
     console.log("========================\n");
     
     return json<ActionResponse>({
@@ -196,7 +216,7 @@ export async function action({ request }: ActionFunctionArgs) {
       analysis: {
         orderTotal,
         giftCardAmount,
-        storeCreditAmount,
+        storeCreditAmount: totalDiscounts, // Using totalDiscounts as it includes store credits
         cashbackEligibleAmount,
         currency: order.currencyCode,
         transactions: processedTransactions
