@@ -199,16 +199,24 @@ export async function action({ request }: ActionFunctionArgs) {
       });
     
     // Calculate implied store credit from the difference
+    // Store Credits = Order Total - Net Payment - Gift Cards
     const impliedNonCashPayments = orderTotal - netPayment;
     storeCreditAmount = impliedNonCashPayments - giftCardAmount;
+    
+    // Ensure store credit is not negative (in case of rounding errors)
+    if (storeCreditAmount < 0) {
+      storeCreditAmount = 0;
+    }
     
     console.log("\n=== FINAL CALCULATION ===");
     console.log(`Order Total: ${orderTotal} ${order.currencyCode}`);
     console.log(`Net Payment (Cashback Eligible): ${netPayment} ${order.currencyCode}`);
-    console.log(`\nBreakdown (for reference):`);
-    console.log(`- Gift Cards identified: ${giftCardAmount} ${order.currencyCode}`);
-    console.log(`- Store Credits/Other non-cash: ${storeCreditAmount} ${order.currencyCode}`);
+    console.log(`\nBreakdown of non-cash payments:`);
     console.log(`- Total non-cash payments: ${impliedNonCashPayments} ${order.currencyCode}`);
+    console.log(`  - Gift Cards identified: ${giftCardAmount} ${order.currencyCode}`);
+    console.log(`  - Store Credits (calculated): ${storeCreditAmount} ${order.currencyCode}`);
+    console.log(`\nVerification: ${netPayment} + ${giftCardAmount} + ${storeCreditAmount} = ${netPayment + giftCardAmount + storeCreditAmount}`);
+    console.log(`Should equal order total: ${orderTotal}`);
     console.log("========================\n");
     
     return json<ActionResponse>({
@@ -351,8 +359,20 @@ export default function TestTransactions() {
               </div>
               
               <div style={{ display: "flex", justifyContent: "space-between", color: "#666" }}>
-                <span>− Store Credits/Discounts:</span>
+                <span>− Store Credits:</span>
                 <span>{formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</span>
+              </div>
+              
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                paddingTop: "12px",
+                borderTop: "1px solid #ddd",
+                fontSize: "14px",
+                color: "#666"
+              }}>
+                <span>Total Non-Cash Payments:</span>
+                <span>{formatCurrency(actionData.analysis.giftCardAmount + actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</span>
               </div>
               
               <div style={{
