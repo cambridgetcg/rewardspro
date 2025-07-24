@@ -134,16 +134,16 @@ export async function action({ request }: ActionFunctionArgs) {
     const order = result.data.order;
     const transactions = order.transactions || [];
     
-    // Calculate payment breakdown
+    // Calculate payment breakdown using subtraction method
     let giftCardAmount = 0;
     let storeCreditAmount = 0;
-    let regularPaymentAmount = 0;
     
     console.log("\n=== PAYMENT CALCULATION BREAKDOWN ===");
     console.log(`Order Total: ${order.totalPriceSet.shopMoney.amount} ${order.currencyCode}`);
     console.log(`Total Transactions: ${transactions.length}`);
     console.log("\nProcessing transactions:");
     
+    // Only look for gift cards and store credits
     const processedTransactions = transactions
       .filter((t: any) => {
         const isSuccessful = t.status === 'SUCCESS';
@@ -163,19 +163,17 @@ export async function action({ request }: ActionFunctionArgs) {
         console.log(`  Gateway: "${originalGateway}" (lowercase: "${gateway}")`);
         console.log(`  Amount: ${amount} ${t.amountSet.shopMoney.currencyCode}`);
         
-        // Identify payment type
-        if (gateway === 'gift_card' || gateway.includes('gift')) {
+        // Only identify gift cards and store credits
+        if (gateway === 'gift_card' || gateway.includes('gift_card')) {
           giftCardAmount += amount;
           console.log(`  → Identified as GIFT CARD`);
           console.log(`  → Gift card total now: ${giftCardAmount}`);
-        } else if (gateway === 'store_credit' || gateway.includes('credit')) {
+        } else if (gateway === 'store_credit') {
           storeCreditAmount += amount;
           console.log(`  → Identified as STORE CREDIT`);
           console.log(`  → Store credit total now: ${storeCreditAmount}`);
         } else {
-          regularPaymentAmount += amount;
-          console.log(`  → Identified as REGULAR PAYMENT`);
-          console.log(`  → Regular payment total now: ${regularPaymentAmount}`);
+          console.log(`  → Regular payment method (${originalGateway})`);
         }
         
         return {
@@ -187,18 +185,16 @@ export async function action({ request }: ActionFunctionArgs) {
         };
       });
     
+    // Calculate using subtraction method
     const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
-    const cashbackEligibleAmount = regularPaymentAmount;
+    const cashbackEligibleAmount = orderTotal - giftCardAmount - storeCreditAmount;
     
     console.log("\n=== FINAL CALCULATION SUMMARY ===");
     console.log(`Order Total: ${orderTotal}`);
-    console.log(`Gift Card Amount: ${giftCardAmount}`);
-    console.log(`Store Credit Amount: ${storeCreditAmount}`);
-    console.log(`Regular Payment Amount: ${regularPaymentAmount}`);
-    console.log(`Cashback Eligible Amount: ${cashbackEligibleAmount}`);
-    console.log(`\nVerification: ${giftCardAmount} + ${storeCreditAmount} + ${regularPaymentAmount} = ${giftCardAmount + storeCreditAmount + regularPaymentAmount}`);
-    console.log(`Should equal order total: ${orderTotal}`);
-    console.log(`Difference: ${Math.abs(orderTotal - (giftCardAmount + storeCreditAmount + regularPaymentAmount))}`);
+    console.log(`- Gift Card Amount: ${giftCardAmount}`);
+    console.log(`- Store Credit Amount: ${storeCreditAmount}`);
+    console.log(`= Cashback Eligible Amount: ${cashbackEligibleAmount}`);
+    console.log(`\nVerification: ${orderTotal} - ${giftCardAmount} - ${storeCreditAmount} = ${cashbackEligibleAmount}`);
     console.log("================================\n");
     
     return json<ActionResponse>({
@@ -366,16 +362,11 @@ export default function TestTransactions() {
               <strong>Total Transactions Found:</strong> {actionData.analysis.transactions.length}
             </p>
             <p style={{ margin: "4px 0" }}>
-              <strong>Calculation:</strong><br />
-              Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) + 
-              Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}) + 
-              Regular Payments ({formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}) = 
-              {formatCurrency(
-                actionData.analysis.giftCardAmount + 
-                actionData.analysis.storeCreditAmount + 
-                actionData.analysis.cashbackEligibleAmount, 
-                actionData.analysis.currency
-              )}
+              <strong>Calculation Method:</strong><br />
+              Order Total ({formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}) − 
+              Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) − 
+              Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}) = 
+              Cashback Eligible ({formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)})
             </p>
             <p style={{ margin: "4px 0", color: "#dc2626" }}>
               <strong>Check your browser console for detailed calculation logs!</strong>
