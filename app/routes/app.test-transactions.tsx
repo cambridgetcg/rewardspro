@@ -161,7 +161,7 @@ export async function action({ request }: ActionFunctionArgs) {
         if (gateway === 'gift_card' || gateway.includes('gift_card')) {
           giftCardAmount += amount;
           console.log(`  → Identified as GIFT CARD (excluded from cashback)`);
-        } else if (gateway === 'store_credit') {
+        } else if (gateway === 'shopify_store_credit' || gateway.includes('store_credit')) {
           storeCreditAmount += amount;
           console.log(`  → Identified as STORE CREDIT (excluded from cashback)`);
         } else {
@@ -367,9 +367,9 @@ export default function TestTransactions() {
                         borderRadius: "4px",
                         fontSize: "14px",
                         backgroundColor: t.gateway.toLowerCase().includes('gift_card') ? '#fef3c7' : 
-                                       t.gateway.toLowerCase() === 'store_credit' ? '#ddd6fe' : '#d1fae5',
+                                       t.gateway.toLowerCase().includes('store_credit') ? '#ddd6fe' : '#d1fae5',
                         color: t.gateway.toLowerCase().includes('gift_card') ? '#92400e' : 
-                               t.gateway.toLowerCase() === 'store_credit' ? '#5b21b6' : '#065f46'
+                               t.gateway.toLowerCase().includes('store_credit') ? '#5b21b6' : '#065f46'
                       }}>
                         {t.gateway}
                       </span>
