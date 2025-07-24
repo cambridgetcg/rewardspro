@@ -18,6 +18,7 @@ type ActionResponse =
         currency: string;
         transactions: Array<{
           id: string;
+          type: string;
           gateway: string;
           amount: number;
           kind: string;
@@ -72,9 +73,9 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   
   try {
-    // Minimal query - only fields needed for cashback calculation
+    // Updated query using the gateway field for transaction identification
     const query = `#graphql
-      query getOrderPaymentDetails($id: ID!) {
+      query GetOrderPaidAmount($id: ID!) {
         order(id: $id) {
           id
           name
@@ -91,15 +92,15 @@ export async function action({ request }: ActionFunctionArgs) {
           # Payment gateway names (helpful for identification)
           paymentGatewayNames
           
-          # Transactions - the key data for payment breakdown
-          transactions(first: 50) {
+          # Transactions - using gateway field for identification
+          transactions(first: 250) {
             id
-            kind
-            gateway
-            status
+            gateway             # Payment gateway name (gift_card, shopify_store_credit, etc.)
+            status              # SUCCESS, FAILED, etc.
+            kind                # SALE, CAPTURE, REFUND, ...
             amountSet {
-              shopMoney {
-                amount
+              shopMoney { 
+                amount 
                 currencyCode
               }
             }
@@ -134,46 +135,52 @@ export async function action({ request }: ActionFunctionArgs) {
     const order = result.data.order;
     const transactions = order.transactions || [];
     
-    // Calculate payment breakdown using SUBTRACTION method
+    // Calculate payment breakdown using the type field
     let giftCardAmount = 0;
     let storeCreditAmount = 0;
     
-    console.log("\n=== CASHBACK CALCULATION (SUBTRACTION METHOD) ===");
+    console.log("\n=== CASHBACK CALCULATION (GATEWAY-BASED METHOD) ===");
     console.log(`Order Total: ${order.totalPriceSet.shopMoney.amount} ${order.currencyCode}`);
     console.log(`Payment Gateways: ${order.paymentGatewayNames?.join(', ') || 'none'}`);
-    console.log(`\nIdentifying non-cashback eligible transactions:`);
+    console.log(`\nAnalyzing transactions by gateway:`);
     
+    // Filter and process transactions
     const processedTransactions = transactions
-      .filter((t: any) => {
-        const isSuccessful = t.status === 'SUCCESS';
-        const isSale = t.kind === 'SALE';
-        return isSuccessful && isSale;
+      .filter((tx: any) => {
+        // Keep only successful sales/captures
+        const isSuccessful = tx.status === 'SUCCESS';
+        const isSaleOrCapture = ['SALE', 'CAPTURE'].includes(tx.kind);
+        return isSuccessful && isSaleOrCapture;
       })
-      .map((t: any) => {
-        const amount = parseFloat(t.amountSet.shopMoney.amount);
-        const gateway = t.gateway.toLowerCase();
-        const originalGateway = t.gateway;
+      .map((tx: any) => {
+        const amount = parseFloat(tx.amountSet.shopMoney.amount);
+        const gateway = tx.gateway.toLowerCase();
         
-        console.log(`\nTransaction: ${originalGateway}`);
-        console.log(`  Amount: ${amount} ${t.amountSet.shopMoney.currencyCode}`);
+        console.log(`\nTransaction ID: ${tx.id}`);
+        console.log(`  Gateway: ${tx.gateway}`);
+        console.log(`  Kind: ${tx.kind}`);
+        console.log(`  Status: ${tx.status}`);
+        console.log(`  Amount: ${amount} ${tx.amountSet.shopMoney.currencyCode}`);
         
-        // Only identify and sum gift cards and store credits
+        // Use gateway field to identify gift cards and store credits
         if (gateway === 'gift_card' || gateway.includes('gift_card')) {
           giftCardAmount += amount;
-          console.log(`  → Identified as GIFT CARD (excluded from cashback)`);
+          console.log(`  → Identified as GIFT CARD by gateway (excluded from cashback)`);
         } else if (gateway === 'shopify_store_credit' || gateway.includes('store_credit')) {
           storeCreditAmount += amount;
-          console.log(`  → Identified as STORE CREDIT (excluded from cashback)`);
+          console.log(`  → Identified as STORE CREDIT by gateway (excluded from cashback)`);
         } else {
-          console.log(`  → Regular payment (${originalGateway}) - eligible for cashback`);
+          console.log(`  → Regular payment (gateway: ${tx.gateway}) - eligible for cashback`);
         }
         
         return {
-          id: t.id,
-          gateway: t.gateway,
+          id: tx.id,
+          type: gateway.includes('gift_card') ? 'GIFT_CARD' : 
+                gateway.includes('store_credit') ? 'STORE_CREDIT' : 'EXTERNAL',
+          gateway: tx.gateway,
           amount,
-          kind: t.kind,
-          status: t.status
+          kind: tx.kind,
+          status: tx.status
         };
       });
     
@@ -181,11 +188,17 @@ export async function action({ request }: ActionFunctionArgs) {
     const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
     const cashbackEligibleAmount = orderTotal - giftCardAmount - storeCreditAmount;
     
+    // Alternative calculation: sum only external payments
+    const externalPaymentAmount = processedTransactions
+      .filter((tx: any) => tx.type === 'EXTERNAL')
+      .reduce((sum: number, tx: any) => sum + tx.amount, 0);
+    
     console.log("\n=== FINAL CALCULATION ===");
     console.log(`Order Total: ${orderTotal} ${order.currencyCode}`);
     console.log(`- Gift Cards: ${giftCardAmount} ${order.currencyCode}`);
     console.log(`- Store Credits: ${storeCreditAmount} ${order.currencyCode}`);
-    console.log(`= Cashback Eligible: ${cashbackEligibleAmount} ${order.currencyCode}`);
+    console.log(`= Cashback Eligible (subtraction): ${cashbackEligibleAmount} ${order.currencyCode}`);
+    console.log(`= External Payments (direct sum): ${externalPaymentAmount} ${order.currencyCode}`);
     console.log("========================\n");
     
     return json<ActionResponse>({
@@ -196,7 +209,7 @@ export async function action({ request }: ActionFunctionArgs) {
         orderTotal,
         giftCardAmount,
         storeCreditAmount,
-        cashbackEligibleAmount,
+        cashbackEligibleAmount: externalPaymentAmount, // Using the direct sum method
         currency: order.currencyCode,
         transactions: processedTransactions
       }
@@ -227,7 +240,7 @@ export default function TestTransactions() {
   return (
     <div style={{ maxWidth: "800px", margin: "0 auto", padding: "40px 20px" }}>
       <h1 style={{ fontSize: "24px", marginBottom: "24px" }}>
-        Cashback Transaction Test
+        Cashback Transaction Test (Gateway-Based Method)
       </h1>
       
       <div style={{
@@ -247,6 +260,9 @@ export default function TestTransactions() {
         </ol>
         <p style={{ marginTop: "12px", marginBottom: "0" }}>
           <strong>Required permissions:</strong> Your app needs <code>read_orders</code> access scope.
+        </p>
+        <p style={{ marginTop: "8px", marginBottom: "0" }}>
+          <strong>Note:</strong> This implementation uses the <code>gateway</code> field on transactions to identify gift_card and shopify_store_credit transactions.
         </p>
       </div>
       
@@ -352,8 +368,9 @@ export default function TestTransactions() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #ddd" }}>
-                  <th style={{ padding: "8px", textAlign: "left" as const }}>Gateway</th>
                   <th style={{ padding: "8px", textAlign: "left" as const }}>Type</th>
+                  <th style={{ padding: "8px", textAlign: "left" as const }}>Gateway</th>
+                  <th style={{ padding: "8px", textAlign: "left" as const }}>Kind</th>
                   <th style={{ padding: "8px", textAlign: "left" as const }}>Status</th>
                   <th style={{ padding: "8px", textAlign: "right" as const }}>Amount</th>
                 </tr>
@@ -366,14 +383,15 @@ export default function TestTransactions() {
                         padding: "2px 8px",
                         borderRadius: "4px",
                         fontSize: "14px",
-                        backgroundColor: t.gateway.toLowerCase().includes('gift_card') ? '#fef3c7' : 
-                                       t.gateway.toLowerCase().includes('store_credit') ? '#ddd6fe' : '#d1fae5',
-                        color: t.gateway.toLowerCase().includes('gift_card') ? '#92400e' : 
-                               t.gateway.toLowerCase().includes('store_credit') ? '#5b21b6' : '#065f46'
+                        backgroundColor: t.type === 'GIFT_CARD' ? '#fef3c7' : 
+                                       t.type === 'STORE_CREDIT' ? '#ddd6fe' : '#d1fae5',
+                        color: t.type === 'GIFT_CARD' ? '#92400e' : 
+                               t.type === 'STORE_CREDIT' ? '#5b21b6' : '#065f46'
                       }}>
-                        {t.gateway}
+                        {t.type}
                       </span>
                     </td>
+                    <td style={{ padding: "8px", fontSize: "14px" }}>{t.gateway}</td>
                     <td style={{ padding: "8px" }}>{t.kind}</td>
                     <td style={{ padding: "8px" }}>{t.status}</td>
                     <td style={{ padding: "8px", textAlign: "right" as const }}>
@@ -396,9 +414,7 @@ export default function TestTransactions() {
             <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
             <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
               For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>.
-              This is calculated as: Order Total ({formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}) 
-              minus Gift Cards ({formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}) 
-              minus Store Credits ({formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}).
+              This amount represents the sum of all external payments (excluding transactions with type GIFT_CARD or STORE_CREDIT).
             </p>
           </div>
           
