@@ -161,11 +161,12 @@ export async function action({ request }: ActionFunctionArgs) {
         if (gateway === 'gift_card' || gateway.includes('gift_card')) {
           giftCardAmount += amount;
           console.log(`  → Identified as GIFT CARD (excluded from cashback)`);
-        } else if (gateway === 'store_credit') {
+        } else if (gateway === 'store_credit' || gateway === 'shopify_store_credit' || gateway === 'store_credit_payment') {
           storeCreditAmount += amount;
           console.log(`  → Identified as STORE CREDIT (excluded from cashback)`);
         } else {
           console.log(`  → Regular payment (${originalGateway}) - eligible for cashback`);
+          console.log(`  → Gateway exact value: "${gateway}"`);
         }
         
         return {
