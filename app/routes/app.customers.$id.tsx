@@ -1,6 +1,6 @@
 // app/routes/app.customers.$id.v2.tsx
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Link, useActionData, Form, useNavigation, useSubmit } from "@remix-run/react";
+import { useLoaderData, Link, useActionData, Form, useNavigation, useSubmit, useNavigate } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { getCustomerTierInfo } from "../services/customer-tier.server";
 import prisma from "../db.server";
@@ -105,9 +105,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         customer(id: $customerId) {
           id
           displayName
-          defaultEmailAddress {
-            emailAddress
-          }
+          email
           storeCreditAccounts(first: 10) {
             edges {
               node {
@@ -195,9 +193,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         query getCustomerStoreCredit($customerId: ID!) {
           customer(id: $customerId) {
             id
-            defaultEmailAddress {
-              emailAddress
-            }
+            email
             storeCreditAccounts(first: 10) {
               edges {
                 node {
@@ -344,6 +340,7 @@ export default function CustomerDetailV2() {
   const actionData = useActionData<ActionResponse>();
   const navigation = useNavigation();
   const submit = useSubmit();
+  const navigate = useNavigate();
   
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'transactions' | 'ledger'>('overview');
@@ -845,7 +842,7 @@ export default function CustomerDetailV2() {
       {/* Header */}
       <div style={styles.header}>
         <Link 
-          to="/app/customers/credit-v2" 
+          to="/app/customers/credit" 
           style={styles.backLink}
           onMouseOver={(e) => e.currentTarget.style.color = '#1d4ed8'}
           onMouseOut={(e) => e.currentTarget.style.color = '#3b82f6'}
@@ -861,14 +858,14 @@ export default function CustomerDetailV2() {
           </div>
           
           <div style={styles.headerActions}>
-            <Link
-              to={`/app/customers/credit-v2?customer=${customer.id}`}
+            <button
+              onClick={() => navigate(`/app/customers/credit?customer=${customer.id}`)}
               style={styles.primaryButton}
               onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
               onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
             >
               Manage Credit
-            </Link>
+            </button>
           </div>
         </div>
       </div>
