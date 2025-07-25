@@ -531,19 +531,21 @@ export default function CustomerDetailV2() {
     creditTitle: {
       fontSize: "16px",
       opacity: 0.9,
-      marginBottom: "8px",
+      marginBottom: "12px",
       fontWeight: "500"
     },
     creditAmount: {
       fontSize: "48px",
       fontWeight: "700",
-      margin: "0",
-      letterSpacing: "-1px"
+      margin: "0 0 16px 0",
+      letterSpacing: "-1px",
+      lineHeight: "1"
     },
     syncInfo: {
       fontSize: "14px",
       opacity: 0.8,
-      marginBottom: "8px"
+      marginBottom: "8px",
+      marginTop: "4px"
     },
     syncButton: {
       backgroundColor: "rgba(255, 255, 255, 0.2)",
