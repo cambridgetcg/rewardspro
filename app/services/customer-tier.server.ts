@@ -361,7 +361,12 @@ export async function getCustomerTierInfo(customerId: string, shopDomain: string
       tier: true,
       customer: {
         include: {
-          analytics: true
+          analytics: true,
+          transactions: {
+            where: {
+              status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
+            }
+          }
         }
       }
     }
@@ -382,17 +387,40 @@ export async function getCustomerTierInfo(customerId: string, shopDomain: string
   });
 
   let progressInfo = null;
-  if (nextTier && nextTier.minSpend !== null && membership.customer.analytics) {
-    const relevantSpending = nextTier.evaluationPeriod === EvaluationPeriod.LIFETIME
-      ? membership.customer.analytics.lifetimeSpending
-      : membership.customer.analytics.yearlySpending;
+  if (nextTier && nextTier.minSpend !== null) {
+    let relevantSpending = 0;
+    
+    // Use analytics if available, otherwise calculate from transactions
+    if (membership.customer.analytics) {
+      relevantSpending = nextTier.evaluationPeriod === EvaluationPeriod.LIFETIME
+        ? membership.customer.analytics.lifetimeSpending
+        : membership.customer.analytics.yearlySpending;
+    } else {
+      // Fallback: calculate from transactions if analytics are missing
+      const now = new Date();
+      const twelveMonthsAgo = subMonths(now, 12);
+      
+      if (nextTier.evaluationPeriod === EvaluationPeriod.LIFETIME) {
+        relevantSpending = membership.customer.transactions.reduce(
+          (sum, t) => sum + t.orderAmount, 
+          0
+        );
+      } else {
+        relevantSpending = membership.customer.transactions
+          .filter(t => t.createdAt >= twelveMonthsAgo)
+          .reduce((sum, t) => sum + t.orderAmount, 0);
+      }
+    }
+    
+    // Calculate progress percentage directly
+    const progressPercentage = Math.min(100, (relevantSpending / nextTier.minSpend) * 100);
     
     progressInfo = {
       nextTier,
       currentSpending: relevantSpending,
       requiredSpending: nextTier.minSpend,
       remainingSpending: Math.max(0, nextTier.minSpend - relevantSpending),
-      progressPercentage: membership.customer.analytics.nextTierProgress
+      progressPercentage: progressPercentage
     };
   }
 
