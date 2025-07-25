@@ -140,16 +140,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     shopifyError = "Failed to load store credit accounts from Shopify";
   }
   
-  // Calculate total store credit across all currencies (simplified conversion)
-  const totalStoreCreditUSD = storeCreditAccounts.reduce((sum, account) => {
-    const amount = parseFloat(account.balance.amount);
-    const rate = account.balance.currencyCode === 'USD' ? 1 : 
-                account.balance.currencyCode === 'CAD' ? 0.75 : 
-                account.balance.currencyCode === 'EUR' ? 1.1 : 
-                account.balance.currencyCode === 'GBP' ? 1.25 : 1;
-    return sum + (amount * rate);
-  }, 0);
-  
   return json({ 
     customer,
     tierInfo,
@@ -161,7 +151,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       transactionCount: lifetimeStats._count
     },
     storeCreditAccounts,
-    totalStoreCreditUSD,
     shopifyError,
     shopDomain
   });
@@ -336,7 +325,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetailV2() {
-  const { customer, tierInfo, stats, storeCreditAccounts, totalStoreCreditUSD, shopifyError, shopDomain } = useLoaderData<typeof loader>();
+  const { customer, tierInfo, stats, storeCreditAccounts, shopifyError, shopDomain } = useLoaderData<typeof loader>();
   const actionData = useActionData<ActionResponse>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -366,13 +355,6 @@ export default function CustomerDetailV2() {
   }, [actionData]);
   
   // Helper functions
-  const getTierIcon = (cashbackPercent: number) => {
-    if (cashbackPercent >= 10) return "👑";
-    if (cashbackPercent >= 7) return "⭐";
-    if (cashbackPercent >= 5) return "✨";
-    return "";
-  };
-  
   const isSyncStale = () => {
     if (!customer.lastSyncedAt) return true;
     const lastSync = new Date(customer.lastSyncedAt);
@@ -396,15 +378,15 @@ export default function CustomerDetailV2() {
   };
   
   const formatLedgerType = (type: LedgerEntryType) => {
-    const typeMap: Record<LedgerEntryType, { label: string; color: string; icon: string }> = {
-      'MANUAL_ADJUSTMENT': { label: 'Manual', color: '#1565c0', icon: '✏️' },
-      'SHOPIFY_SYNC': { label: 'Sync', color: '#7b1fa2', icon: '🔄' },
-      'CASHBACK_EARNED': { label: 'Cashback', color: '#2e7d32', icon: '💰' },
-      'ORDER_PAYMENT': { label: 'Payment', color: '#e65100', icon: '🛒' },
-      'REFUND_CREDIT': { label: 'Refund', color: '#00897b', icon: '↩️' },
-      'INITIAL_IMPORT': { label: 'Import', color: '#5e35b1', icon: '📥' }
+    const typeMap: Record<LedgerEntryType, { label: string; color: string }> = {
+      'MANUAL_ADJUSTMENT': { label: 'Manual', color: '#1565c0' },
+      'SHOPIFY_SYNC': { label: 'Sync', color: '#7b1fa2' },
+      'CASHBACK_EARNED': { label: 'Cashback', color: '#2e7d32' },
+      'ORDER_PAYMENT': { label: 'Payment', color: '#e65100' },
+      'REFUND_CREDIT': { label: 'Refund', color: '#00897b' },
+      'INITIAL_IMPORT': { label: 'Import', color: '#5e35b1' }
     };
-    return typeMap[type] || { label: type, color: '#666', icon: '•' };
+    return typeMap[type] || { label: type, color: '#666' };
   };
   
   const formatLedgerSource = (source: LedgerSource) => {
@@ -459,17 +441,8 @@ export default function CustomerDetailV2() {
     title: {
       fontSize: "32px",
       fontWeight: "700",
-      margin: "0 0 8px 0",
+      margin: "0",
       color: "#1a1a1a"
-    },
-    subtitle: {
-      fontSize: "16px",
-      color: "#666",
-      margin: "0 0 4px 0"
-    },
-    shopInfo: {
-      fontSize: "14px",
-      color: "#999"
     },
     headerActions: {
       display: "flex",
@@ -509,14 +482,6 @@ export default function CustomerDetailV2() {
       boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
       position: "relative" as const,
       overflow: "hidden"
-    },
-    creditCardBg: {
-      position: "absolute" as const,
-      top: 0,
-      right: 0,
-      fontSize: "200px",
-      opacity: 0.1,
-      transform: "rotate(-15deg) translate(50px, -50px)"
     },
     creditContent: {
       position: "relative" as const,
@@ -599,16 +564,6 @@ export default function CustomerDetailV2() {
     accountBalance: {
       fontWeight: "600"
     },
-    accountTotal: {
-      marginTop: "12px",
-      paddingTop: "12px",
-      borderTop: "1px solid rgba(255, 255, 255, 0.2)",
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      fontSize: "18px",
-      fontWeight: "600"
-    },
     mainContent: {
       backgroundColor: "white",
       borderRadius: "12px",
@@ -674,10 +629,6 @@ export default function CustomerDetailV2() {
       padding: "32px",
       borderRadius: "12px",
       textAlign: "center" as const
-    },
-    tierIcon: {
-      fontSize: "64px",
-      marginBottom: "16px"
     },
     tierName: {
       fontSize: "28px",
@@ -855,8 +806,6 @@ export default function CustomerDetailV2() {
         <div style={styles.headerContent}>
           <div style={styles.customerInfo}>
             <h1 style={styles.title}>{customer.email}</h1>
-            <p style={styles.subtitle}>Customer ID: {customer.shopifyCustomerId}</p>
-            <p style={styles.shopInfo}>Shop: {shopDomain}</p>
           </div>
           
           <div style={styles.headerActions}>
@@ -892,7 +841,6 @@ export default function CustomerDetailV2() {
       
       {/* Store Credit Card */}
       <div style={styles.creditCard}>
-        <div style={styles.creditCardBg}>💳</div>
         <div style={styles.creditContent}>
           <div style={styles.creditHeader}>
             <div>
@@ -919,23 +867,13 @@ export default function CustomerDetailV2() {
                   e.currentTarget.style.transform = 'translateY(0)';
                 }}
               >
-                {isSyncing ? (
-                  <>
-                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    🔄 Sync with Shopify
-                  </>
-                )}
+                {isSyncing ? "Syncing..." : "Sync with Shopify"}
               </button>
             </Form>
           </div>
           
           {isSyncStale() && (
             <div style={styles.syncWarning}>
-              <span>⚠️</span>
               <span>Balance may be outdated. Consider syncing to get the latest balance from Shopify.</span>
             </div>
           )}
@@ -950,18 +888,11 @@ export default function CustomerDetailV2() {
                   <span style={styles.accountBalance}>{parseFloat(account.balance.amount).toFixed(2)}</span>
                 </div>
               ))}
-              {storeCreditAccounts.length > 1 && (
-                <div style={styles.accountTotal}>
-                  <span>Total (USD equivalent)</span>
-                  <span>${totalStoreCreditUSD.toFixed(2)}</span>
-                </div>
-              )}
             </div>
           )}
           
           {shopifyError && (
             <div style={{ ...styles.syncWarning, marginTop: '16px' }}>
-              <span>⚠️</span>
               <span>{shopifyError}</span>
             </div>
           )}
@@ -1044,9 +975,6 @@ export default function CustomerDetailV2() {
               {tierInfo && (
                 <div style={styles.tierSection}>
                   <div style={styles.tierCard}>
-                    <div style={styles.tierIcon}>
-                      {getTierIcon(tierInfo.membership.tier.cashbackPercent)}
-                    </div>
                     <h2 style={styles.tierName}>{tierInfo.membership.tier.name}</h2>
                     <p style={styles.tierSubtext}>{tierInfo.membership.tier.cashbackPercent}% Cashback Rate</p>
                     <p style={styles.tierMeta}>
@@ -1096,7 +1024,7 @@ export default function CustomerDetailV2() {
                   
                   {!tierInfo.progressInfo && (
                     <div style={{ ...styles.progressSection, textAlign: "center", color: "#666" }}>
-                      <p>🎉 Already at the highest tier!</p>
+                      <p>Already at the highest tier!</p>
                     </div>
                   )}
                 </div>
@@ -1204,7 +1132,6 @@ export default function CustomerDetailV2() {
                             </td>
                             <td style={styles.td}>
                               <div style={styles.ledgerType}>
-                                <span>{typeInfo.icon}</span>
                                 <span style={{ color: typeInfo.color, fontWeight: "500" }}>
                                   {typeInfo.label}
                                 </span>
@@ -1264,13 +1191,6 @@ export default function CustomerDetailV2() {
           )}
         </div>
       </div>
-      
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }
