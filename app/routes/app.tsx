@@ -55,8 +55,8 @@ export default function App() {
         <Link to="/app/test-transactions">
           Test Transaction Bebaviour
         </Link>
-        <Link to="/app/customers/credit">
-          Credits
+        <Link to="/app/notifications/email">
+          Email Templates
         </Link>
         <Link to="/app/tiers">
           Tiers

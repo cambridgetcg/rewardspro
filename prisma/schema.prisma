@@ -45,11 +45,13 @@ model Customer {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   
-  transactions      CashbackTransaction[]
-  membershipHistory CustomerMembership[]
-  creditLedger      StoreCreditLedger[]
-  tierChangeLogs    TierChangeLog[]
-  analytics         CustomerAnalytics?
+  transactions          CashbackTransaction[]
+  membershipHistory     CustomerMembership[]
+  creditLedger          StoreCreditLedger[]
+  tierChangeLogs        TierChangeLog[]
+  analytics             CustomerAnalytics?
+  emailLogs             EmailLog[]
+  emailPreferences      CustomerEmailPreferences?
   
   @@unique([shopDomain, shopifyCustomerId])
   @@index([shopDomain])
@@ -235,6 +237,113 @@ model StoreCreditLedger {
   @@index([source])
 }
 
+model EmailTemplate {
+  id                String      @id @default(uuid())
+  shopDomain        String
+  type              EmailTemplateType
+  name              String      // Display name for the template
+  subject           String
+  preheader         String
+  heading           String
+  body              String      @db.Text
+  footer            String
+  tone              EmailTone   @default(FRIENDLY)
+  includeStoreLogo  Boolean     @default(true)
+  includeUnsubscribe Boolean    @default(true)
+  primaryColor      String      @default("#1a1a1a")
+  buttonText        String?
+  buttonUrl         String?
+  enabled           Boolean     @default(false)
+  
+  // Optional segmentation
+  customerSegment   String?     // null = all, "vip", "new", etc.
+  tierId            String?     // null = all tiers, or specific tier
+  minBalance        Float?      // Only send if balance >= this amount
+  
+  // Tracking
+  lastModifiedBy    String?
+  testEmailsSent    Int         @default(0)
+  
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  emailLogs         EmailLog[]
+  
+  @@unique([shopDomain, type, customerSegment, tierId])
+  @@index([shopDomain])
+  @@index([type])
+  @@index([enabled])
+}
+
+model EmailLog {
+  id              String      @id @default(uuid())
+  shopDomain      String
+  customerId      String
+  templateId      String?
+  templateType    EmailTemplateType
+  recipientEmail  String
+  subject         String
+  status          EmailStatus @default(PENDING)
+  sentAt          DateTime?
+  openedAt        DateTime?
+  clickedAt       DateTime?
+  bouncedAt       DateTime?
+  errorMessage    String?
+  
+  // Email content snapshot
+  renderedBody    String?     @db.Text
+  
+  // Tracking
+  opens           Int         @default(0)
+  clicks          Int         @default(0)
+  
+  // Context data at time of send
+  metadata        Json?       // Store credit balance, tier, etc. at send time
+  
+  createdAt       DateTime    @default(now())
+  
+  customer        Customer    @relation(fields: [customerId], references: [id])
+  template        EmailTemplate? @relation(fields: [templateId], references: [id])
+  
+  @@index([shopDomain])
+  @@index([customerId])
+  @@index([templateType])
+  @@index([status])
+  @@index([sentAt])
+  @@index([createdAt])
+}
+
+model CustomerEmailPreferences {
+  id                String      @id @default(uuid())
+  customerId        String      @unique
+  shopDomain        String
+  
+  // Opt-in/out preferences by type
+  creditEarnedOptIn     Boolean @default(true)
+  balanceUpdateOptIn    Boolean @default(true)
+  tierProgressOptIn     Boolean @default(true)
+  marketingOptIn        Boolean @default(true)
+  
+  // Frequency preferences
+  balanceUpdateFrequency EmailFrequency @default(MONTHLY)
+  tierProgressFrequency  EmailFrequency @default(MONTHLY)
+  
+  // Other preferences
+  preferredLanguage     String    @default("en")
+  timezone              String    @default("UTC")
+  
+  // Tracking
+  lastUpdated           DateTime  @default(now())
+  updatedBy             String?   // customer or admin
+  unsubscribedAt        DateTime?
+  unsubscribeReason     String?
+  
+  customer              Customer  @relation(fields: [customerId], references: [id])
+  
+  @@index([shopDomain])
+  @@index([customerId])
+}
+
 // Enums
 
 enum TransactionStatus {
@@ -287,4 +396,42 @@ enum TierChangeType {
   MANUAL_OVERRIDE
   EXPIRATION_REVERT
   TIER_DELETION_MIGRATION
+}
+
+enum EmailTemplateType {
+  CREDIT_EARNED
+  BALANCE_UPDATE
+  TIER_PROGRESS
+  WELCOME
+  TIER_UPGRADE
+  TIER_DOWNGRADE
+  CREDIT_EXPIRY_WARNING
+}
+
+enum EmailTone {
+  PROFESSIONAL
+  FRIENDLY
+  CASUAL
+  EXCITED
+}
+
+enum EmailStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  FAILED
+  UNSUBSCRIBED
+}
+
+enum EmailFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  NEVER
 }
