@@ -6,7 +6,6 @@ import prisma from "../db.server";
 import { useState, useEffect } from "react";
 import { EvaluationPeriod } from "@prisma/client";
 import { getTierDistribution, batchEvaluateCustomerTiers, handleExpiredMemberships } from "../services/customer-tier.server";
-import { format } from "date-fns";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -51,11 +50,6 @@ export async function action({ request }: ActionFunctionArgs) {
       const cashbackPercent = formData.get("cashbackPercent");
       const isActive = formData.get("isActive") === "true";
       const benefits = formData.get("benefits") as string;
-      const color = formData.get("color") as string;
-      const sortOrder = formData.get("sortOrder");
-      const maxMembers = formData.get("maxMembers");
-      const validFrom = formData.get("validFrom") as string;
-      const validUntil = formData.get("validUntil") as string;
       
       // Get the current tier to check if name is actually changing
       const currentTier = await prisma.tier.findUnique({
@@ -100,11 +94,6 @@ export async function action({ request }: ActionFunctionArgs) {
           evaluationPeriod: formData.get("evaluationPeriod") as EvaluationPeriod || currentTier.evaluationPeriod,
           isActive,
           benefits: benefitsJson,
-          color: color || null,
-          sortOrder: sortOrder ? parseInt(sortOrder as string) : null,
-          maxMembers: maxMembers ? parseInt(maxMembers as string) : null,
-          validFrom: validFrom ? new Date(validFrom) : null,
-          validUntil: validUntil ? new Date(validUntil) : null,
         },
       });
       
@@ -114,11 +103,6 @@ export async function action({ request }: ActionFunctionArgs) {
       const cashbackPercent = parseFloat(formData.get("cashbackPercent") as string);
       const evaluationPeriod = formData.get("evaluationPeriod") as EvaluationPeriod;
       const benefits = formData.get("benefits") as string;
-      const color = formData.get("color") as string;
-      const sortOrder = formData.get("sortOrder");
-      const maxMembers = formData.get("maxMembers");
-      const validFrom = formData.get("validFrom") as string;
-      const validUntil = formData.get("validUntil") as string;
       
       // Check for duplicate name
       const existingTier = await prisma.tier.findFirst({
@@ -148,11 +132,6 @@ export async function action({ request }: ActionFunctionArgs) {
           evaluationPeriod: evaluationPeriod || EvaluationPeriod.ANNUAL,
           isActive: true,
           benefits: benefitsJson,
-          color: color || null,
-          sortOrder: sortOrder ? parseInt(sortOrder as string) : null,
-          maxMembers: maxMembers ? parseInt(maxMembers as string) : null,
-          validFrom: validFrom ? new Date(validFrom) : null,
-          validUntil: validUntil ? new Date(validUntil) : null,
         },
       });
       
@@ -429,15 +408,6 @@ export default function TierSettings() {
       borderRadius: "8px",
       border: "1px solid #e0e0e0"
     },
-    colorPreview: {
-      width: "24px",
-      height: "24px",
-      borderRadius: "4px",
-      display: "inline-block",
-      verticalAlign: "middle",
-      marginRight: "8px",
-      border: "1px solid #e0e0e0"
-    },
     actionButtons: {
       display: "flex",
       gap: "8px"
@@ -594,60 +564,6 @@ export default function TierSettings() {
               </select>
             </div>
             
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Color (Hex)</label>
-              <input
-                type="text"
-                name="color"
-                placeholder="#000000"
-                pattern="^#[0-9A-Fa-f]{6}$"
-                style={styles.input}
-              />
-              <span style={styles.helpText}>For UI display</span>
-            </div>
-            
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Sort Order</label>
-              <input
-                type="number"
-                name="sortOrder"
-                placeholder="Auto"
-                min="0"
-                style={styles.input}
-              />
-              <span style={styles.helpText}>Override default sorting</span>
-            </div>
-            
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Max Members</label>
-              <input
-                type="number"
-                name="maxMembers"
-                placeholder="Unlimited"
-                min="1"
-                style={styles.input}
-              />
-              <span style={styles.helpText}>Limit tier membership</span>
-            </div>
-            
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Valid From</label>
-              <input
-                type="datetime-local"
-                name="validFrom"
-                style={styles.input}
-              />
-            </div>
-            
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Valid Until</label>
-              <input
-                type="datetime-local"
-                name="validUntil"
-                style={styles.input}
-              />
-            </div>
-            
             <div style={{ gridColumn: "span 2" }}>
               <label style={styles.label}>Additional Benefits (JSON)</label>
               <textarea
@@ -701,7 +617,6 @@ export default function TierSettings() {
                 <th style={styles.th}>Members</th>
                 <th style={styles.th}>Avg Yearly Spend</th>
                 <th style={styles.th}>Status</th>
-                <th style={styles.th}>Validity</th>
                 <th style={styles.th}>Actions</th>
               </tr>
             </thead>
@@ -709,7 +624,7 @@ export default function TierSettings() {
               {tiers.map((tier) => (
                 <tr key={tier.id}>
                   {editingTierId === tier.id ? (
-                    <td colSpan={9} style={{ padding: 0 }}>
+                    <td colSpan={8} style={{ padding: 0 }}>
                       <Form method="post" style={{ ...styles.form, margin: 0, borderRadius: 0 }}>
                         <input type="hidden" name="_action" value="update" />
                         <input type="hidden" name="tierId" value={tier.id} />
@@ -766,62 +681,6 @@ export default function TierSettings() {
                           </div>
                           
                           <div style={styles.formGroup}>
-                            <label style={styles.label}>Color (Hex)</label>
-                            <input
-                              type="text"
-                              name="color"
-                              defaultValue={tier.color || ""}
-                              placeholder="#000000"
-                              pattern="^#[0-9A-Fa-f]{6}$"
-                              style={styles.input}
-                            />
-                          </div>
-                          
-                          <div style={styles.formGroup}>
-                            <label style={styles.label}>Sort Order</label>
-                            <input
-                              type="number"
-                              name="sortOrder"
-                              defaultValue={tier.sortOrder || ""}
-                              placeholder="Auto"
-                              min="0"
-                              style={styles.input}
-                            />
-                          </div>
-                          
-                          <div style={styles.formGroup}>
-                            <label style={styles.label}>Max Members</label>
-                            <input
-                              type="number"
-                              name="maxMembers"
-                              defaultValue={tier.maxMembers || ""}
-                              placeholder="Unlimited"
-                              min="1"
-                              style={styles.input}
-                            />
-                          </div>
-                          
-                          <div style={styles.formGroup}>
-                            <label style={styles.label}>Valid From</label>
-                            <input
-                              type="datetime-local"
-                              name="validFrom"
-                              defaultValue={tier.validFrom ? format(new Date(tier.validFrom), "yyyy-MM-dd'T'HH:mm") : ""}
-                              style={styles.input}
-                            />
-                          </div>
-                          
-                          <div style={styles.formGroup}>
-                            <label style={styles.label}>Valid Until</label>
-                            <input
-                              type="datetime-local"
-                              name="validUntil"
-                              defaultValue={tier.validUntil ? format(new Date(tier.validUntil), "yyyy-MM-dd'T'HH:mm") : ""}
-                              style={styles.input}
-                            />
-                          </div>
-                          
-                          <div style={styles.formGroup}>
                             <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <input
                                 type="checkbox"
@@ -869,24 +728,17 @@ export default function TierSettings() {
                   ) : (
                     <>
                       <td style={styles.td}>
-                        <div style={{ display: "flex", alignItems: "center" }}>
-                          {tier.color && (
-                            <span style={{ ...styles.colorPreview, backgroundColor: tier.color }} />
-                          )}
-                          <strong>{tier.name}</strong>
-                        </div>
+                        <strong>{tier.name}</strong>
                       </td>
                       <td style={styles.td}>{tier.cashbackPercent}%</td>
                       <td style={styles.td}>
-                        {tier.minSpend ? `$${tier.minSpend.toFixed(2)}` : "No minimum"}
+                        {tier.minSpend ? `${tier.minSpend.toFixed(2)}` : "No minimum"}
                       </td>
                       <td style={styles.td}>
                         {tier.evaluationPeriod === 'LIFETIME' ? 'Lifetime' : '12-month'}
                       </td>
                       <td style={styles.td}>
                         {tier.memberCount}
-                        {tier.maxMembers && ` / ${tier.maxMembers}`}
-                        {tier.isFull && <span style={{ color: "#dc3545", marginLeft: "4px" }}>(Full)</span>}
                       </td>
                       <td style={styles.td}>
                         ${tier.avgYearlySpending.toFixed(2)}
@@ -898,17 +750,6 @@ export default function TierSettings() {
                         }}>
                           {tier.isActive ? "Active" : "Inactive"}
                         </span>
-                      </td>
-                      <td style={styles.td}>
-                        {tier.validFrom || tier.validUntil ? (
-                          <div style={{ fontSize: "12px" }}>
-                            {tier.validFrom && `From: ${format(new Date(tier.validFrom), 'MMM d, yyyy')}`}
-                            {tier.validFrom && tier.validUntil && <br />}
-                            {tier.validUntil && `Until: ${format(new Date(tier.validUntil), 'MMM d, yyyy')}`}
-                          </div>
-                        ) : (
-                          "Always valid"
-                        )}
                       </td>
                       <td style={styles.td}>
                         <div style={styles.actionButtons}>

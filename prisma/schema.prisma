@@ -85,14 +85,8 @@ model Tier {
   evaluationPeriod  EvaluationPeriod    @default(ANNUAL)
   isActive          Boolean             @default(true)
   
-  // New fields for enhanced tier features
+  // Additional tier features
   benefits          Json?       // Additional benefits beyond cashback
-  color             String?     // For UI display (hex color)
-  icon              String?     // For visual hierarchy
-  sortOrder         Int?        // Manual sort override
-  maxMembers        Int?        // Optional member limit
-  validFrom         DateTime?   // Time-based tiers
-  validUntil        DateTime?   // Time-based tiers
   
   createdAt         DateTime            @default(now())
   

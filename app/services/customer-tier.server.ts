@@ -6,28 +6,14 @@ import { subMonths } from "date-fns";
 
 // Assign initial tier to new customer
 export async function assignInitialTier(customerId: string, shopDomain: string) {
-  // Get the tier with no minimum spend (base tier), considering validity dates
-  const now = new Date();
+  // Get the tier with no minimum spend (base tier)
   const defaultTier = await prisma.tier.findFirst({
     where: { 
       shopDomain,
       isActive: true,
-      minSpend: null,
-      OR: [
-        { validFrom: null, validUntil: null },
-        { 
-          validFrom: { lte: now },
-          OR: [
-            { validUntil: null },
-            { validUntil: { gte: now } }
-          ]
-        }
-      ]
+      minSpend: null
     },
-    orderBy: [
-      { sortOrder: 'asc' },
-      { cashbackPercent: 'asc' }
-    ]
+    orderBy: { cashbackPercent: 'asc' }
   });
 
   if (!defaultTier) {
@@ -35,22 +21,9 @@ export async function assignInitialTier(customerId: string, shopDomain: string) 
     const lowestTier = await prisma.tier.findFirst({
       where: { 
         shopDomain,
-        isActive: true,
-        OR: [
-          { validFrom: null, validUntil: null },
-          { 
-            validFrom: { lte: now },
-            OR: [
-              { validUntil: null },
-              { validUntil: { gte: now } }
-            ]
-          }
-        ]
+        isActive: true
       },
-      orderBy: [
-        { minSpend: 'asc' },
-        { sortOrder: 'asc' }
-      ]
+      orderBy: { minSpend: 'asc' }
     });
     
     if (!lowestTier) {
@@ -142,27 +115,14 @@ export async function evaluateCustomerTier(customerId: string, shopDomain: strin
 
   const currentMembership = customer.membershipHistory[0];
 
-  // Get all active tiers for this shop that are currently valid
+  // Get all active tiers for this shop
   const now = new Date();
   const tiers = await prisma.tier.findMany({
     where: { 
       shopDomain,
-      isActive: true,
-      OR: [
-        { validFrom: null, validUntil: null },
-        { 
-          validFrom: { lte: now },
-          OR: [
-            { validUntil: null },
-            { validUntil: { gte: now } }
-          ]
-        }
-      ]
+      isActive: true
     },
-    orderBy: [
-      { cashbackPercent: 'desc' },
-      { sortOrder: 'asc' }
-    ]
+    orderBy: { cashbackPercent: 'desc' }
   });
 
   // Calculate spending based on evaluation periods
@@ -182,20 +142,6 @@ export async function evaluateCustomerTier(customerId: string, shopDomain: strin
   let qualifiedTierSpending = 0;
 
   for (const tier of tiers) {
-    // Check if tier has reached max members
-    if (tier.maxMembers) {
-      const currentMembers = await prisma.customerMembership.count({
-        where: {
-          tierId: tier.id,
-          isActive: true
-        }
-      });
-      
-      if (currentMembers >= tier.maxMembers) {
-        continue; // Skip this tier if it's full
-      }
-    }
-
     // Get spending amount based on tier's evaluation period
     const tierQualifyingSpending = tier.evaluationPeriod === EvaluationPeriod.LIFETIME 
       ? lifetimeSpending 
@@ -425,28 +371,14 @@ export async function getCustomerTierInfo(customerId: string, shopDomain: string
 
   // Get next tier info
   const currentTierCashback = membership.tier.cashbackPercent;
-  const now = new Date();
   
   const nextTier = await prisma.tier.findFirst({
     where: {
       shopDomain,
       cashbackPercent: { gt: currentTierCashback },
-      isActive: true,
-      OR: [
-        { validFrom: null, validUntil: null },
-        { 
-          validFrom: { lte: now },
-          OR: [
-            { validUntil: null },
-            { validUntil: { gte: now } }
-          ]
-        }
-      ]
+      isActive: true
     },
-    orderBy: [
-      { cashbackPercent: 'asc' },
-      { sortOrder: 'asc' }
-    ]
+    orderBy: { cashbackPercent: 'asc' }
   });
 
   let progressInfo = null;
@@ -501,41 +433,16 @@ export async function assignTierManually(
     throw new Error("Customer not found or belongs to different shop");
   }
 
-  // Verify tier belongs to shop and is valid
-  const now = new Date();
-  const tier = await prisma.tier.findFirst({
+  // Verify tier belongs to shop
+  const tier = await prisma.tier.findUnique({
     where: { 
       id: tierId,
-      shopDomain,
-      OR: [
-        { validFrom: null, validUntil: null },
-        { 
-          validFrom: { lte: now },
-          OR: [
-            { validUntil: null },
-            { validUntil: { gte: now } }
-          ]
-        }
-      ]
+      shopDomain
     }
   });
 
   if (!tier) {
-    throw new Error("Tier not found, belongs to different shop, or is not currently valid");
-  }
-
-  // Check if tier has reached max members
-  if (tier.maxMembers) {
-    const currentMembers = await prisma.customerMembership.count({
-      where: {
-        tierId: tier.id,
-        isActive: true
-      }
-    });
-    
-    if (currentMembers >= tier.maxMembers) {
-      throw new Error(`Tier has reached maximum member limit of ${tier.maxMembers}`);
-    }
+    throw new Error("Tier not found or belongs to different shop");
   }
 
   // Get current membership
@@ -543,6 +450,8 @@ export async function assignTierManually(
     where: { customerId, isActive: true },
     include: { tier: true }
   });
+
+  const now = new Date();
 
   // Use a transaction to ensure atomicity
   const membership = await prisma.$transaction(async (tx) => {
@@ -658,10 +567,7 @@ export async function batchEvaluateCustomerTiers(shopDomain: string, batchSize =
 export async function getTierDistribution(shopDomain: string) {
   const tiers = await prisma.tier.findMany({
     where: { shopDomain },
-    orderBy: [
-      { cashbackPercent: 'desc' },
-      { sortOrder: 'asc' }
-    ],
+    orderBy: { cashbackPercent: 'desc' },
     include: {
       _count: {
         select: {
@@ -711,8 +617,7 @@ export async function getTierDistribution(shopDomain: string) {
           ? (tier._count.customerMemberships / totalCustomers) * 100 
           : 0,
         avgLifetimeSpending,
-        avgYearlySpending,
-        isFull: tier.maxMembers ? tier._count.customerMemberships >= tier.maxMembers : false
+        avgYearlySpending
       };
     })
   );
