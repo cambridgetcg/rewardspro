@@ -487,6 +487,7 @@ export default function StoreCreditManagementV2() {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showActivityDetails, setShowActivityDetails] = useState(false);
   const [sortBy, setSortBy] = useState<"credit-desc" | "credit-asc" | "email-asc" | "email-desc">("credit-desc");
+  const [displayCount, setDisplayCount] = useState(7); // Start with 7 customers
   
   const isSubmitting = navigation.state === "submitting";
   
@@ -504,6 +505,11 @@ export default function StoreCreditManagementV2() {
       }
     }
   }, [actionData]);
+  
+  // Reset display count when search or sort changes
+  useEffect(() => {
+    setDisplayCount(7);
+  }, [searchTerm, sortBy]);
   
   // Sort customers based on selected sorting option
   const sortedCustomers = [...customers].sort((a, b) => {
@@ -1086,6 +1092,65 @@ export default function StoreCreditManagementV2() {
       fontWeight: "600",
       textTransform: "uppercase" as const,
       letterSpacing: "0.5px"
+    },
+    viewMoreContainer: {
+      textAlign: "center" as const,
+      padding: "32px 16px",
+      borderTop: "2px solid #e0e0e0",
+      backgroundColor: "#fafafa",
+      borderRadius: "0 0 12px 12px",
+      marginTop: "24px"
+    },
+    viewMoreText: {
+      fontSize: "14px",
+      color: "#666",
+      marginBottom: "16px",
+      fontWeight: "500"
+    },
+    viewMoreButtons: {
+      display: "flex",
+      gap: "12px",
+      justifyContent: "center",
+      alignItems: "center"
+    },
+    viewMoreButton: {
+      padding: "10px 24px",
+      backgroundColor: "transparent",
+      color: "#3b82f6",
+      border: "2px solid #3b82f6",
+      borderRadius: "8px",
+      cursor: "pointer",
+      fontSize: "14px",
+      fontWeight: "500",
+      transition: "all 0.2s"
+    },
+    viewAllButton: {
+      padding: "10px 24px",
+      backgroundColor: "transparent",
+      color: "#10B981",
+      border: "2px solid #10B981",
+      borderRadius: "8px",
+      cursor: "pointer",
+      fontSize: "14px",
+      fontWeight: "500",
+      transition: "all 0.2s"
+    },
+    collapseContainer: {
+      textAlign: "center" as const,
+      padding: "16px",
+      borderTop: "1px solid #e0e0e0",
+      marginTop: "8px"
+    },
+    collapseButton: {
+      padding: "8px 20px",
+      backgroundColor: "transparent",
+      color: "#666",
+      border: "1px solid #e0e0e0",
+      borderRadius: "6px",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "500",
+      transition: "all 0.2s"
     }
   };
   
@@ -1326,96 +1391,123 @@ export default function StoreCreditManagementV2() {
               </p>
             </div>
           ) : (
-            filteredCustomers.map((customer) => {
-              const sampleData = sampleCustomersWithAccounts.find(s => s.customer.id === customer.id);
-              
-              return (
-                <div 
-                  key={customer.id} 
-                  style={styles.customerCard}
-                  onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'}
-                  onMouseOut={(e) => e.currentTarget.style.boxShadow = 'none'}
-                >
-                  <div style={styles.customerHeader}>
-                    <div style={styles.customerInfo}>
-                      <h3 style={styles.customerEmail}>{customer.email}</h3>
-                      <p style={styles.customerId}>
-                        Customer ID: {customer.shopifyCustomerId} • 
-                        Total Earned: ${customer.totalEarned.toFixed(2)}
-                      </p>
-                      <p style={isSyncStale(customer.lastSyncedAt) ? styles.syncStatusStale : styles.syncStatus}>
-                        {isSyncStale(customer.lastSyncedAt) && "⚠️ "}
-                        Last synced: {formatSyncTime(customer.lastSyncedAt)}
-                      </p>
-                    </div>
-                    {customer.storeCredit > 0 ? (
-                      <div style={styles.creditBadge}>
-                        ${customer.storeCredit.toFixed(2)}
+            <>
+              {filteredCustomers.slice(0, displayCount).map((customer) => {
+                const sampleData = sampleCustomersWithAccounts.find(s => s.customer.id === customer.id);
+                
+                return (
+                  <div 
+                    key={customer.id} 
+                    style={styles.customerCard}
+                    onMouseOver={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'}
+                    onMouseOut={(e) => e.currentTarget.style.boxShadow = 'none'}
+                  >
+                    <div style={styles.customerHeader}>
+                      <div style={styles.customerInfo}>
+                        <h3 style={styles.customerEmail}>{customer.email}</h3>
+                        <p style={styles.customerId}>
+                          Customer ID: {customer.shopifyCustomerId} • 
+                          Total Earned: ${customer.totalEarned.toFixed(2)}
+                        </p>
+                        <p style={isSyncStale(customer.lastSyncedAt) ? styles.syncStatusStale : styles.syncStatus}>
+                          {isSyncStale(customer.lastSyncedAt) && "⚠️ "}
+                          Last synced: {formatSyncTime(customer.lastSyncedAt)}
+                        </p>
                       </div>
-                    ) : (
-                      <div style={styles.noCreditBadge}>
-                        $0.00
+                      {customer.storeCredit > 0 ? (
+                        <div style={styles.creditBadge}>
+                          ${customer.storeCredit.toFixed(2)}
+                        </div>
+                      ) : (
+                        <div style={styles.noCreditBadge}>
+                          $0.00
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Show store credit accounts if available */}
+                    {sampleData && sampleData.storeCreditAccounts.length > 0 && (
+                      <div style={styles.accountsList}>
+                        <strong>Store Credit Accounts:</strong>
+                        {sampleData.storeCreditAccounts.map((account, idx) => (
+                          <div key={account.id} style={styles.accountItem}>
+                            <span>{account.balance.currencyCode}</span>
+                            <span>${parseFloat(account.balance.amount).toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <div style={{ ...styles.accountItem, borderBottom: 'none', fontWeight: '600', paddingTop: '12px' }}>
+                          <span>Total (USD equiv)</span>
+                          <span>${sampleData.totalBalanceUSD.toFixed(2)}</span>
+                        </div>
                       </div>
                     )}
-                  </div>
-                  
-                  {/* Show store credit accounts if available */}
-                  {sampleData && sampleData.storeCreditAccounts.length > 0 && (
-                    <div style={styles.accountsList}>
-                      <strong>Store Credit Accounts:</strong>
-                      {sampleData.storeCreditAccounts.map((account, idx) => (
-                        <div key={account.id} style={styles.accountItem}>
-                          <span>{account.balance.currencyCode}</span>
-                          <span>${parseFloat(account.balance.amount).toFixed(2)}</span>
-                        </div>
-                      ))}
-                      <div style={{ ...styles.accountItem, borderBottom: 'none', fontWeight: '600', paddingTop: '12px' }}>
-                        <span>Total (USD equiv)</span>
-                        <span>${sampleData.totalBalanceUSD.toFixed(2)}</span>
-                      </div>
+                    
+                    <div style={styles.actionRow}>
+                      <button
+                        onClick={() => {
+                          setSelectedCustomerId(customer.id);
+                          setFormActionType("add");
+                          setShowForm(true);
+                        }}
+                        style={styles.addButton}
+                        onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
+                        onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+                      >
+                        + Add Credit
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSelectedCustomerId(customer.id);
+                          setFormActionType("remove");
+                          setShowForm(true);
+                        }}
+                        style={styles.removeButton}
+                        disabled={customer.storeCredit === 0}
+                        onMouseOver={(e) => {
+                          if (customer.storeCredit > 0) {
+                            e.currentTarget.style.opacity = '0.9';
+                          }
+                        }}
+                        onMouseOut={(e) => {
+                          if (customer.storeCredit > 0) {
+                            e.currentTarget.style.opacity = '1';
+                          }
+                        }}
+                      >
+                        − Remove Credit
+                      </button>
+                      <button
+                        onClick={() => {
+                          console.log('Navigating to customer:', customer.id);
+                          navigate(`/app/customers/${customer.id}`);
+                        }}
+                        style={styles.viewDetailsButton}
+                        onMouseOver={(e) => {
+                          e.currentTarget.style.backgroundColor = '#3b82f6';
+                          e.currentTarget.style.color = 'white';
+                        }}
+                        onMouseOut={(e) => {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                          e.currentTarget.style.color = '#3b82f6';
+                        }}
+                      >
+                        View Details →
+                      </button>
                     </div>
-                  )}
-                  
-                  <div style={styles.actionRow}>
+                  </div>
+                );
+              })}
+              
+              {/* View More / View All Buttons */}
+              {filteredCustomers.length > displayCount && (
+                <div style={styles.viewMoreContainer}>
+                  <p style={styles.viewMoreText}>
+                    Showing {displayCount} of {filteredCustomers.length} customers
+                  </p>
+                  <div style={styles.viewMoreButtons}>
                     <button
-                      onClick={() => {
-                        setSelectedCustomerId(customer.id);
-                        setFormActionType("add");
-                        setShowForm(true);
-                      }}
-                      style={styles.addButton}
-                      onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
-                      onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
-                    >
-                      + Add Credit
-                    </button>
-                    <button
-                      onClick={() => {
-                        setSelectedCustomerId(customer.id);
-                        setFormActionType("remove");
-                        setShowForm(true);
-                      }}
-                      style={styles.removeButton}
-                      disabled={customer.storeCredit === 0}
-                      onMouseOver={(e) => {
-                        if (customer.storeCredit > 0) {
-                          e.currentTarget.style.opacity = '0.9';
-                        }
-                      }}
-                      onMouseOut={(e) => {
-                        if (customer.storeCredit > 0) {
-                          e.currentTarget.style.opacity = '1';
-                        }
-                      }}
-                    >
-                      − Remove Credit
-                    </button>
-                    <button
-                      onClick={() => {
-                        console.log('Navigating to customer:', customer.id);
-                        navigate(`/app/customers/${customer.id}`);
-                      }}
-                      style={styles.viewDetailsButton}
+                      onClick={() => setDisplayCount(displayCount + 10)}
+                      style={styles.viewMoreButton}
                       onMouseOver={(e) => {
                         e.currentTarget.style.backgroundColor = '#3b82f6';
                         e.currentTarget.style.color = 'white';
@@ -1425,12 +1517,44 @@ export default function StoreCreditManagementV2() {
                         e.currentTarget.style.color = '#3b82f6';
                       }}
                     >
-                      View Details →
+                      View More (+10)
+                    </button>
+                    <button
+                      onClick={() => setDisplayCount(filteredCustomers.length)}
+                      style={styles.viewAllButton}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.backgroundColor = '#10B981';
+                        e.currentTarget.style.color = 'white';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.color = '#10B981';
+                      }}
+                    >
+                      View All ({filteredCustomers.length})
                     </button>
                   </div>
                 </div>
-              );
-            })
+              )}
+              
+              {/* Collapse Button */}
+              {displayCount > 7 && filteredCustomers.length > 7 && (
+                <div style={styles.collapseContainer}>
+                  <button
+                    onClick={() => setDisplayCount(7)}
+                    style={styles.collapseButton}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.backgroundColor = '#f5f5f5';
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }}
+                  >
+                    ↑ Collapse to Top 7
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
