@@ -568,11 +568,11 @@ export default function StoreCreditManagementV2() {
   
   const formatLedgerSource = (source: LedgerSource) => {
     const sourceMap: Record<LedgerSource, string> = {
-      'APP_MANUAL': '🛠️ App',
-      'APP_CASHBACK': '💰 App',
-      'SHOPIFY_ADMIN': '🛍️ Shopify',
-      'SHOPIFY_ORDER': '📦 Order',
-      'RECONCILIATION': '🔄 System'
+      'APP_MANUAL': 'App',
+      'APP_CASHBACK': 'App',
+      'SHOPIFY_ADMIN': 'Shopify',
+      'SHOPIFY_ORDER': 'Order',
+      'RECONCILIATION': 'System'
     };
     return sourceMap[source] || source;
   };
@@ -1160,9 +1160,7 @@ export default function StoreCreditManagementV2() {
       <div style={styles.header}>
         <div style={styles.headerRow}>
           <div>
-            <h1 style={styles.title}>💳 Store Credit Management</h1>
-            <p style={styles.subtitle}>Manage customer store credit balances and transactions</p>
-            <p style={styles.shopInfo}>Shop: {shopDomain}</p>
+            <h1 style={styles.title}>Store Credit Management</h1>
           </div>
           <button
             onClick={() => setShowSyncModal(true)}
@@ -1170,7 +1168,7 @@ export default function StoreCreditManagementV2() {
             onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
             onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
           >
-            🔄 Sync with Shopify
+            Sync with Shopify
           </button>
         </div>
       </div>
@@ -1278,7 +1276,7 @@ export default function StoreCreditManagementV2() {
           <div style={{ padding: "24px 32px 0" }}>
             <Form method="post" style={styles.creditForm}>
               <h3 style={styles.formTitle}>
-                {formActionType === "add" ? "➕ Add" : "➖ Remove"} Store Credit
+                {formActionType === "add" ? "Add" : "Remove"} Store Credit
               </h3>
               <p style={styles.formSubtitle}>
                 {selectedCustomer.email} • Current balance: ${selectedCustomer.storeCredit.toFixed(2)}
@@ -1286,7 +1284,7 @@ export default function StoreCreditManagementV2() {
               
               {formActionType === "remove" && selectedCustomer.storeCredit === 0 && (
                 <div style={styles.warningText}>
-                  ⚠️ This customer has no store credit to remove.
+                  This customer has no store credit to remove.
                 </div>
               )}
               
@@ -1340,7 +1338,7 @@ export default function StoreCreditManagementV2() {
               </div>
               
               <div style={styles.infoText}>
-                ℹ️ {formActionType === "add" ? "Maximum single credit amount is $15,000 USD equivalent" : "Store credit balance cannot go negative"}
+                {formActionType === "add" ? "Maximum single credit amount is $15,000 USD equivalent" : "Store credit balance cannot go negative"}
               </div>
               
               <div style={styles.formActions}>
@@ -1410,7 +1408,7 @@ export default function StoreCreditManagementV2() {
                           Total Earned: ${customer.totalEarned.toFixed(2)}
                         </p>
                         <p style={isSyncStale(customer.lastSyncedAt) ? styles.syncStatusStale : styles.syncStatus}>
-                          {isSyncStale(customer.lastSyncedAt) && "⚠️ "}
+                          {isSyncStale(customer.lastSyncedAt) && ""}
                           Last synced: {formatSyncTime(customer.lastSyncedAt)}
                         </p>
                       </div>
@@ -1435,10 +1433,6 @@ export default function StoreCreditManagementV2() {
                             <span>${parseFloat(account.balance.amount).toFixed(2)}</span>
                           </div>
                         ))}
-                        <div style={{ ...styles.accountItem, borderBottom: 'none', fontWeight: '600', paddingTop: '12px' }}>
-                          <span>Total (USD equiv)</span>
-                          <span>${sampleData.totalBalanceUSD.toFixed(2)}</span>
-                        </div>
                       </div>
                     )}
                     
@@ -1491,7 +1485,7 @@ export default function StoreCreditManagementV2() {
                           e.currentTarget.style.color = '#3b82f6';
                         }}
                       >
-                        View Details →
+                        View Details
                       </button>
                     </div>
                   </div>
@@ -1550,7 +1544,7 @@ export default function StoreCreditManagementV2() {
                       e.currentTarget.style.backgroundColor = 'transparent';
                     }}
                   >
-                    ↑ Collapse to Top 7
+                    Collapse to Top 7
                   </button>
                 </div>
               )}
@@ -1563,7 +1557,7 @@ export default function StoreCreditManagementV2() {
       {recentActivity && recentActivity.length > 0 && (
         <div style={styles.activitySection}>
           <div style={styles.activityHeader}>
-            <h2 style={styles.activityTitle}>📊 Recent Activity</h2>
+            <h2 style={styles.activityTitle}>Recent Activity</h2>
             <button
               onClick={() => setShowActivityDetails(!showActivityDetails)}
               style={styles.toggleButton}
@@ -1664,7 +1658,7 @@ export default function StoreCreditManagementV2() {
       {showSyncModal && (
         <div style={styles.modal} onClick={() => setShowSyncModal(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <h2 style={styles.modalTitle}>🔄 Sync Store Credit Balances</h2>
+            <h2 style={styles.modalTitle}>Sync Store Credit Balances</h2>
             <p style={styles.modalText}>
               This will fetch the latest store credit balances from Shopify and update your local database. 
               The sync process will check for customers with multiple store credit accounts in different currencies.
