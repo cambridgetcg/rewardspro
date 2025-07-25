@@ -49,7 +49,6 @@ export async function action({ request }: ActionFunctionArgs) {
       const minSpend = formData.get("minSpend");
       const cashbackPercent = formData.get("cashbackPercent");
       const isActive = formData.get("isActive") === "true";
-      const benefits = formData.get("benefits") as string;
       
       // Get the current tier to check if name is actually changing
       const currentTier = await prisma.tier.findUnique({
@@ -75,16 +74,6 @@ export async function action({ request }: ActionFunctionArgs) {
         }
       }
       
-      // Parse benefits JSON
-      let benefitsJson = null;
-      if (benefits) {
-        try {
-          benefitsJson = JSON.parse(benefits);
-        } catch (e) {
-          return json<ActionResponse>({ success: false, error: "Invalid benefits format" }, { status: 400 });
-        }
-      }
-      
       await prisma.tier.update({
         where: { id: tierId, shopDomain: session.shop },
         data: {
@@ -93,7 +82,6 @@ export async function action({ request }: ActionFunctionArgs) {
           cashbackPercent: parseFloat(cashbackPercent as string),
           evaluationPeriod: formData.get("evaluationPeriod") as EvaluationPeriod || currentTier.evaluationPeriod,
           isActive,
-          benefits: benefitsJson,
         },
       });
       
@@ -102,7 +90,6 @@ export async function action({ request }: ActionFunctionArgs) {
       const name = formData.get("name") as string;
       const cashbackPercent = parseFloat(formData.get("cashbackPercent") as string);
       const evaluationPeriod = formData.get("evaluationPeriod") as EvaluationPeriod;
-      const benefits = formData.get("benefits") as string;
       
       // Check for duplicate name
       const existingTier = await prisma.tier.findFirst({
@@ -113,16 +100,6 @@ export async function action({ request }: ActionFunctionArgs) {
         return json<ActionResponse>({ success: false, error: "A tier with this name already exists" }, { status: 400 });
       }
       
-      // Parse benefits JSON
-      let benefitsJson = null;
-      if (benefits) {
-        try {
-          benefitsJson = JSON.parse(benefits);
-        } catch (e) {
-          return json<ActionResponse>({ success: false, error: "Invalid benefits format" }, { status: 400 });
-        }
-      }
-      
       await prisma.tier.create({
         data: {
           shopDomain: session.shop,
@@ -131,7 +108,6 @@ export async function action({ request }: ActionFunctionArgs) {
           cashbackPercent,
           evaluationPeriod: evaluationPeriod || EvaluationPeriod.ANNUAL,
           isActive: true,
-          benefits: benefitsJson,
         },
       });
       
@@ -326,17 +302,6 @@ export default function TierSettings() {
       backgroundColor: "white",
       transition: "border-color 0.2s",
       outline: "none"
-    },
-    textarea: {
-      padding: "8px 12px",
-      border: "1px solid #e0e0e0",
-      borderRadius: "6px",
-      fontSize: "14px",
-      backgroundColor: "white",
-      transition: "border-color 0.2s",
-      outline: "none",
-      minHeight: "80px",
-      resize: "vertical" as const
     },
     helpText: {
       fontSize: "12px",
@@ -563,16 +528,6 @@ export default function TierSettings() {
                 <option value="LIFETIME">Lifetime (never expires)</option>
               </select>
             </div>
-            
-            <div style={{ gridColumn: "span 2" }}>
-              <label style={styles.label}>Additional Benefits (JSON)</label>
-              <textarea
-                name="benefits"
-                placeholder='{"freeShipping": true, "prioritySupport": true}'
-                style={styles.textarea}
-              />
-              <span style={styles.helpText}>Additional tier benefits in JSON format</span>
-            </div>
           </div>
           
           <button
@@ -690,16 +645,6 @@ export default function TierSettings() {
                               />
                               Active
                             </label>
-                          </div>
-                          
-                          <div style={{ gridColumn: "span 2" }}>
-                            <label style={styles.label}>Additional Benefits (JSON)</label>
-                            <textarea
-                              name="benefits"
-                              defaultValue={tier.benefits ? JSON.stringify(tier.benefits, null, 2) : ""}
-                              placeholder='{"freeShipping": true, "prioritySupport": true}'
-                              style={styles.textarea}
-                            />
                           </div>
                         </div>
                         
