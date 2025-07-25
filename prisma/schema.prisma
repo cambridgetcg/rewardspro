@@ -35,11 +35,13 @@ model Customer {
   email             String
   storeCredit       Float       @default(0)
   totalEarned       Float       @default(0)
+  lastSyncedAt      DateTime?   // Track when balance was last synced with Shopify
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   
   transactions      CashbackTransaction[]
   membershipHistory CustomerMembership[]
+  creditLedger      StoreCreditLedger[]
   
   @@unique([shopDomain, shopifyCustomerId])
   @@index([shopDomain])
@@ -135,6 +137,29 @@ model MigrationHistory {
   @@index([createdAt])
 }
 
+model StoreCreditLedger {
+  id                String      @id @default(uuid())
+  customerId        String
+  shopDomain        String
+  amount            Float       // Positive for credit, negative for debit
+  balance           Float       // Running balance after this entry
+  type              LedgerEntryType
+  source            LedgerSource  // Track where change originated
+  shopifyReference  String?     // Order ID, refund ID, or manual adjustment ID
+  description       String?
+  reconciledAt      DateTime?   // When verified against Shopify
+  createdAt         DateTime    @default(now())
+  
+  customer          Customer    @relation(fields: [customerId], references: [id])
+  
+  @@index([customerId])
+  @@index([shopDomain])
+  @@index([createdAt])
+  @@index([shopifyReference])
+  @@index([reconciledAt])
+  @@index([source])
+}
+
 enum TransactionStatus {
   COMPLETED
   SYNCED_TO_SHOPIFY
@@ -152,4 +177,21 @@ enum MigrationStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+enum LedgerEntryType {
+  CASHBACK_EARNED     // From your cashback system
+  ORDER_PAYMENT       // Used as payment on order
+  REFUND_CREDIT       // Refunded to store credit
+  MANUAL_ADJUSTMENT   // Admin adjustments
+  SHOPIFY_SYNC        // Corrections from Shopify webhooks
+  INITIAL_IMPORT      // Initial balance import
+}
+
+enum LedgerSource {
+  APP_CASHBACK      // Your app generated
+  APP_MANUAL        // Your app manual adjustment
+  SHOPIFY_ADMIN     // Detected from Shopify admin
+  SHOPIFY_ORDER     // Order payment/refund
+  RECONCILIATION    // System reconciliation adjustment
 }
