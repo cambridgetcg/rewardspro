@@ -36,12 +36,20 @@ model Customer {
   storeCredit       Float       @default(0)
   totalEarned       Float       @default(0)
   lastSyncedAt      DateTime?   // Track when balance was last synced with Shopify
+  
+  // New fields for enhanced customer management
+  notes             String?     // Admin notes
+  tags              String[]    @default([])  // Custom tags
+  preferences       Json?       // Store customer preferences
+  
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   
   transactions      CashbackTransaction[]
   membershipHistory CustomerMembership[]
   creditLedger      StoreCreditLedger[]
+  tierChangeLogs    TierChangeLog[]
+  analytics         CustomerAnalytics?
   
   @@unique([shopDomain, shopifyCustomerId])
   @@index([shopDomain])
@@ -76,9 +84,21 @@ model Tier {
   cashbackPercent   Float       
   evaluationPeriod  EvaluationPeriod    @default(ANNUAL)
   isActive          Boolean             @default(true)
+  
+  // New fields for enhanced tier features
+  benefits          Json?       // Additional benefits beyond cashback
+  color             String?     // For UI display (hex color)
+  icon              String?     // For visual hierarchy
+  sortOrder         Int?        // Manual sort override
+  maxMembers        Int?        // Optional member limit
+  validFrom         DateTime?   // Time-based tiers
+  validUntil        DateTime?   // Time-based tiers
+  
   createdAt         DateTime            @default(now())
   
   customerMemberships CustomerMembership[]
+  fromTierChanges   TierChangeLog[] @relation("FromTier")
+  toTierChanges     TierChangeLog[] @relation("ToTier")
   
   @@unique([shopDomain, name])
   @@index([shopDomain])
@@ -90,8 +110,17 @@ model CustomerMembership {
   customerId        String
   tierId            String
   startDate         DateTime    @default(now())
+  endDate           DateTime?   // For manual overrides with expiration
   isActive          Boolean     @default(true)
+  
+  // New fields for manual override tracking
+  assignmentType    AssignmentType @default(AUTOMATIC)
+  assignedBy        String?     // Admin who made manual assignment
+  reason            String?     // Reason for manual assignment
+  previousTierId    String?     // Track tier transitions
+  
   createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
   
   customer          Customer    @relation(fields: [customerId], references: [id])
   tier              Tier        @relation(fields: [tierId], references: [id])
@@ -99,6 +128,58 @@ model CustomerMembership {
   @@unique([customerId, isActive])
   @@index([customerId])
   @@index([tierId])
+  @@index([assignmentType])
+}
+
+model TierChangeLog {
+  id                String      @id @default(uuid())
+  customerId        String
+  fromTierId        String?
+  toTierId          String
+  changeType        TierChangeType
+  changeReason      String?
+  triggeredBy       String?     // System or admin ID
+  metadata          Json?       // Additional context (spending amount, etc.)
+  createdAt         DateTime    @default(now())
+  
+  customer          Customer    @relation(fields: [customerId], references: [id])
+  fromTier          Tier?       @relation("FromTier", fields: [fromTierId], references: [id])
+  toTier            Tier        @relation("ToTier", fields: [toTierId], references: [id])
+  
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model CustomerAnalytics {
+  id                String      @id @default(uuid())
+  customerId        String      @unique
+  shopDomain        String
+  
+  // Spending analytics
+  lifetimeSpending  Float       @default(0)
+  yearlySpending    Float       @default(0)
+  quarterlySpending Float       @default(0)
+  monthlySpending   Float       @default(0)
+  avgOrderValue     Float       @default(0)
+  orderCount        Int         @default(0)
+  
+  // Tier analytics
+  currentTierDays   Int         @default(0)
+  tierUpgradeCount  Int         @default(0)
+  lastTierChange    DateTime?
+  nextTierProgress  Float       @default(0)  // Percentage to next tier
+  
+  // Engagement metrics
+  lastOrderDate     DateTime?
+  daysSinceLastOrder Int?
+  
+  calculatedAt      DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  customer          Customer    @relation(fields: [customerId], references: [id])
+  
+  @@index([shopDomain])
+  @@index([customerId])
 }
 
 model Onboarding {
@@ -160,6 +241,8 @@ model StoreCreditLedger {
   @@index([source])
 }
 
+// Enums
+
 enum TransactionStatus {
   COMPLETED
   SYNCED_TO_SHOPIFY
@@ -194,4 +277,20 @@ enum LedgerSource {
   SHOPIFY_ADMIN     // Detected from Shopify admin
   SHOPIFY_ORDER     // Order payment/refund
   RECONCILIATION    // System reconciliation adjustment
+}
+
+enum AssignmentType {
+  AUTOMATIC       // System-assigned based on spending
+  MANUAL          // Admin override
+  PROMOTIONAL     // Special promotion
+  IMPORTED        // From data migration
+}
+
+enum TierChangeType {
+  INITIAL_ASSIGNMENT
+  AUTOMATIC_UPGRADE
+  AUTOMATIC_DOWNGRADE
+  MANUAL_OVERRIDE
+  EXPIRATION_REVERT
+  TIER_DELETION_MIGRATION
 }
