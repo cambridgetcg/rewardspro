@@ -61,7 +61,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Get sample of customers' Shopify store credit accounts for display
   // In production, you might want to batch this or load on demand
   const sampleCustomersWithAccounts: CustomerWithAccounts[] = [];
-  const sampleSize = 5; // Show detailed info for first 5 customers
+  const sampleSize = 7; // Changed from 5 to 7
   
   for (let i = 0; i < Math.min(sampleSize, customers.length); i++) {
     const customer = customers[i];
@@ -486,6 +486,7 @@ export default function StoreCreditManagementV2() {
   const [formActionType, setFormActionType] = useState<"add" | "remove">("add");
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showActivityDetails, setShowActivityDetails] = useState(false);
+  const [sortBy, setSortBy] = useState<"credit-desc" | "credit-asc" | "email-asc" | "email-desc">("credit-desc");
   
   const isSubmitting = navigation.state === "submitting";
   
@@ -504,7 +505,23 @@ export default function StoreCreditManagementV2() {
     }
   }, [actionData]);
   
-  const filteredCustomers = customers.filter(customer => 
+  // Sort customers based on selected sorting option
+  const sortedCustomers = [...customers].sort((a, b) => {
+    switch (sortBy) {
+      case "credit-desc":
+        return b.storeCredit - a.storeCredit;
+      case "credit-asc":
+        return a.storeCredit - b.storeCredit;
+      case "email-asc":
+        return a.email.toLowerCase().localeCompare(b.email.toLowerCase());
+      case "email-desc":
+        return b.email.toLowerCase().localeCompare(a.email.toLowerCase());
+      default:
+        return 0;
+    }
+  });
+  
+  const filteredCustomers = sortedCustomers.filter(customer => 
     customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     customer.shopifyCustomerId.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -674,6 +691,12 @@ export default function StoreCreditManagementV2() {
       margin: 0,
       color: "#1a1a1a"
     },
+    searchAndSort: {
+      display: "flex",
+      gap: "12px",
+      alignItems: "center",
+      flexWrap: "wrap" as const
+    },
     searchInput: {
       padding: "10px 16px",
       border: "2px solid #e0e0e0",
@@ -683,6 +706,16 @@ export default function StoreCreditManagementV2() {
       transition: "border-color 0.2s",
       outline: "none",
       minWidth: "300px"
+    },
+    sortSelect: {
+      padding: "10px 16px",
+      border: "2px solid #e0e0e0",
+      borderRadius: "8px",
+      fontSize: "15px",
+      backgroundColor: "white",
+      transition: "border-color 0.2s",
+      outline: "none",
+      cursor: "pointer"
     },
     customerList: {
       padding: "16px"
@@ -1150,15 +1183,29 @@ export default function StoreCreditManagementV2() {
         {/* Search */}
         <div style={styles.sectionHeader}>
           <h2 style={styles.sectionTitle}>Customer Store Credit</h2>
-          <input
-            type="text"
-            placeholder="Search by email or customer ID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={styles.searchInput}
-            onFocus={(e) => e.currentTarget.style.borderColor = '#3b82f6'}
-            onBlur={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
-          />
+          <div style={styles.searchAndSort}>
+            <input
+              type="text"
+              placeholder="Search by email or customer ID..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={styles.searchInput}
+              onFocus={(e) => e.currentTarget.style.borderColor = '#3b82f6'}
+              onBlur={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
+            />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              style={styles.sortSelect}
+              onFocus={(e) => e.currentTarget.style.borderColor = '#3b82f6'}
+              onBlur={(e) => e.currentTarget.style.borderColor = '#e0e0e0'}
+            >
+              <option value="credit-desc">Credit: High to Low</option>
+              <option value="credit-asc">Credit: Low to High</option>
+              <option value="email-asc">Email: A to Z</option>
+              <option value="email-desc">Email: Z to A</option>
+            </select>
+          </div>
         </div>
         
         {/* Credit Form */}
