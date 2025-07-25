@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useActionData, Form, useNavigation, useSubmit } from "@remix-run/react";
+import { useLoaderData, useActionData, Form, useNavigation, useSubmit, Link, useNavigate } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import type { LedgerEntryType, LedgerSource } from "@prisma/client";
@@ -479,6 +479,7 @@ export default function StoreCreditManagementV2() {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
+  const navigate = useNavigate();
   
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -1365,7 +1366,10 @@ export default function StoreCreditManagementV2() {
                       − Remove Credit
                     </button>
                     <button
-                      onClick={() => window.location.href = `/app/customers/${customer.id}`}
+                      onClick={() => {
+                        console.log('Navigating to customer:', customer.id);
+                        navigate(`/app/customers/${customer.id}`);
+                      }}
                       style={styles.viewDetailsButton}
                       onMouseOver={(e) => {
                         e.currentTarget.style.backgroundColor = '#3b82f6';
