@@ -1,50 +1,144 @@
-// app/routes/app.env-check.tsx
-// Just check what environment variables we can see
+// app/routes/app.test-openai-minimal.tsx
+// Minimal version with debug logging
 
+import { useState } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import { Page, Card, BlockStack, Text } from "@shopify/polaris";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { Form, useActionData, useNavigation, useLoaderData } from "@remix-run/react";
+import {
+  Page,
+  Card,
+  FormLayout,
+  TextField,
+  Select,
+  Button,
+  BlockStack,
+  Banner,
+  Text,
+} from "@shopify/polaris";
+import { authenticate } from "../shopify.server";
 
-export const loader = async () => {
-  // Log everything to console
-  console.log("=== ENVIRONMENT CHECK ===");
-  console.log("OPENAI_API_KEY:", process.env.OPENAI_API_KEY);
-  console.log("Exists?", !!process.env.OPENAI_API_KEY);
-  console.log("Type:", typeof process.env.OPENAI_API_KEY);
-  console.log("Length:", process.env.OPENAI_API_KEY?.length);
-  console.log("First 10:", process.env.OPENAI_API_KEY?.substring(0, 10));
-  console.log("All OPEN* keys:", Object.keys(process.env).filter(k => k.includes('OPEN')));
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  await authenticate.admin(request);
+  
+  // Add debug logging
+  console.log("=== OPENAI KEY CHECK ===");
+  console.log("Key exists?", !!process.env.OPENAI_API_KEY);
+  console.log("Key starts with 'sk-'?", process.env.OPENAI_API_KEY?.startsWith('sk-'));
+  console.log("Key length:", process.env.OPENAI_API_KEY?.length);
   console.log("=======================");
   
-  return json({
-    hasKey: !!process.env.OPENAI_API_KEY,
-    keyLength: process.env.OPENAI_API_KEY?.length || 0,
-    keyPreview: process.env.OPENAI_API_KEY?.substring(0, 7) || "missing",
-    nodeEnv: process.env.NODE_ENV,
-    cwd: process.cwd(),
-  });
+  const hasKey = !!process.env.OPENAI_API_KEY;
+  return json({ hasKey });
 };
 
-export default function EnvCheck() {
-  const data = useLoaderData<typeof loader>();
+export const action = async ({ request }: ActionFunctionArgs) => {
+  await authenticate.admin(request);
+  
+  const formData = await request.formData();
+  const prompt = formData.get("prompt") as string;
+  const apiKey = process.env.OPENAI_API_KEY;
+  
+  if (!apiKey) {
+    return json({ error: "No API key configured", result: null });
+  }
+  
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 150,
+        temperature: 0.7,
+      }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error?.message || "API request failed");
+    }
+    
+    return json({
+      error: null,
+      result: data.choices[0]?.message?.content || "No response",
+    });
+    
+  } catch (error) {
+    return json({
+      error: error instanceof Error ? error.message : "Unknown error",
+      result: null,
+    });
+  }
+};
+
+export default function TestOpenAIMinimal() {
+  const { hasKey } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
+  const navigation = useNavigation();
+  const [prompt, setPrompt] = useState("Write a friendly welcome email for a new customer.");
   
   return (
-    <Page title="Environment Check">
+    <Page title="OpenAI API Test (Minimal)">
       <Card>
-        <BlockStack gap="300">
-          <Text as="h2" variant="headingMd">Environment Variables</Text>
-          
-          <div style={{ fontFamily: 'monospace', background: '#f5f5f5', padding: '16px', borderRadius: '8px' }}>
-            <div>OPENAI_API_KEY exists: {data.hasKey ? '✅ YES' : '❌ NO'}</div>
-            <div>Key length: {data.keyLength}</div>
-            <div>Key preview: {data.keyPreview}...</div>
-            <div>Node ENV: {data.nodeEnv}</div>
-            <div>Working dir: {data.cwd}</div>
-          </div>
-          
-          <Text as="p" variant="bodySm" tone="subdued">
-            Check your terminal for detailed logs
+        <BlockStack gap="400">
+          <Text as="h2" variant="headingMd">Configuration Status</Text>
+          <Text as="p">
+            API Key: {hasKey ? "✅ Configured" : "❌ Not configured"}
           </Text>
+          
+          {!hasKey && (
+            <Banner tone="warning">
+              Add OPENAI_API_KEY to your .env file
+            </Banner>
+          )}
+          
+          <Form method="post">
+            <FormLayout>
+              <TextField
+                label="Test Prompt"
+                value={prompt}
+                onChange={setPrompt}
+                name="prompt"
+                multiline={3}
+                autoComplete="off"
+              />
+              
+              <Button
+                submit
+                variant="primary"
+                loading={navigation.state === "submitting"}
+                disabled={!hasKey}
+              >
+                Test API
+              </Button>
+            </FormLayout>
+          </Form>
+          
+          {actionData?.error && (
+            <Banner tone="critical">{actionData.error}</Banner>
+          )}
+          
+          {actionData?.result && (
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h3" variant="headingSm">API Response:</Text>
+                <div style={{ 
+                  padding: '12px', 
+                  backgroundColor: '#f3f4f6', 
+                  borderRadius: '8px',
+                  whiteSpace: 'pre-wrap'
+                }}>
+                  {actionData.result}
+                </div>
+              </BlockStack>
+            </Card>
+          )}
         </BlockStack>
       </Card>
     </Page>
