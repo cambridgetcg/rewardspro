@@ -1,5 +1,5 @@
 // app/routes/app.email-generator.tsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { Form, useActionData, useNavigation, useLoaderData, useSubmit } from "@remix-run/react";
@@ -28,6 +28,7 @@ import {
   DeleteIcon,
   CheckIcon,
   XIcon,
+  EditIcon,
 } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 // Comment out or remove if db.server doesn't exist yet
@@ -95,6 +96,7 @@ interface ActionData {
   templateId?: string;
   deleted?: boolean;
   toggled?: boolean;
+  updated?: boolean;
 }
 
 const EMAIL_TYPES: Array<{ label: string; value: EmailTemplateType }> = [
@@ -372,6 +374,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
   
+  if (action === "update") {
+    const templateId = formData.get("templateId") as string;
+    const subject = formData.get("subject") as string;
+    const preheader = formData.get("preheader") as string;
+    const heading = formData.get("heading") as string;
+    const body = formData.get("body") as string;
+    const footer = formData.get("footer") as string;
+    const buttonText = formData.get("buttonText") as string | null;
+    
+    // TODO: Uncomment when db is available
+    /*
+    try {
+      await db.emailTemplate.update({
+        where: { id: templateId },
+        data: {
+          subject,
+          preheader,
+          heading,
+          body,
+          footer,
+          buttonText: buttonText || undefined,
+          updatedAt: new Date(),
+          lastModifiedBy: session.id,
+        },
+      });
+      
+      return json<ActionData>({
+        success: true,
+        updated: true,
+      });
+    } catch (error) {
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to update template",
+      });
+    }
+    */
+    
+    return json<ActionData>({
+      success: true,
+      updated: true,
+    });
+  }
+  
   return json<ActionData>({ success: false, error: "Invalid action" });
 };
 
@@ -499,7 +545,24 @@ export default function EmailGenerator() {
   const [selectedTab, setSelectedTab] = useState(0);
   const [previewModalActive, setPreviewModalActive] = useState(false);
   const [deleteModalActive, setDeleteModalActive] = useState(false);
+  const [editModalActive, setEditModalActive] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
+  
+  // Edit form states
+  const [editSubject, setEditSubject] = useState("");
+  const [editPreheader, setEditPreheader] = useState("");
+  const [editHeading, setEditHeading] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [editFooter, setEditFooter] = useState("");
+  const [editButtonText, setEditButtonText] = useState("");
+  
+  // Generated email form states
+  const [genSubject, setGenSubject] = useState("");
+  const [genPreheader, setGenPreheader] = useState("");
+  const [genHeading, setGenHeading] = useState("");
+  const [genBody, setGenBody] = useState("");
+  const [genFooter, setGenFooter] = useState("");
+  const [genButtonText, setGenButtonText] = useState("");
   
   const [emailType, setEmailType] = useState<EmailTemplateType>("WELCOME");
   const [tone, setTone] = useState<EmailTone>("FRIENDLY");
@@ -511,8 +574,21 @@ export default function EmailGenerator() {
   const [cashbackPercent, setCashbackPercent] = useState("5");
   const [benefits, setBenefits] = useState("Early access to sales, Free shipping on all orders, Birthday bonus");
   
+  // Update generated email states when new email is generated
+  useEffect(() => {
+    if (actionData?.generatedEmail && actionData?.success) {
+      setGenSubject(actionData.generatedEmail.subject);
+      setGenPreheader(actionData.generatedEmail.preheader);
+      setGenHeading(actionData.generatedEmail.heading);
+      setGenBody(actionData.generatedEmail.body);
+      setGenFooter(actionData.generatedEmail.footer);
+      setGenButtonText(actionData.generatedEmail.buttonText || "");
+    }
+  }, [actionData]);
+  
   const isGenerating = navigation.state === "submitting" && navigation.formData?.get("action") === "generate";
   const isSaving = navigation.state === "submitting" && navigation.formData?.get("action") === "save";
+  const isUpdating = navigation.state === "submitting" && navigation.formData?.get("action") === "update";
   
   const tabs = [
     {
@@ -573,6 +649,34 @@ export default function EmailGenerator() {
     setPreviewModalActive(true);
   };
   
+  const handleEditTemplate = (template: EmailTemplate) => {
+    setSelectedTemplate(template);
+    setEditSubject(template.subject);
+    setEditPreheader(template.preheader);
+    setEditHeading(template.heading);
+    setEditBody(template.body);
+    setEditFooter(template.footer);
+    setEditButtonText(template.buttonText || "");
+    setEditModalActive(true);
+  };
+  
+  const handleUpdateTemplate = () => {
+    if (selectedTemplate) {
+      const formData = new FormData();
+      formData.append("action", "update");
+      formData.append("templateId", selectedTemplate.id);
+      formData.append("subject", editSubject);
+      formData.append("preheader", editPreheader);
+      formData.append("heading", editHeading);
+      formData.append("body", editBody);
+      formData.append("footer", editFooter);
+      formData.append("buttonText", editButtonText);
+      submit(formData, { method: "post" });
+      setEditModalActive(false);
+      setSelectedTemplate(null);
+    }
+  };
+  
   const rows = templates.map((template) => [
     <InlineStack gap="200" blockAlign="center" key={`type-${template.id}`}>
       <Text as="span" variant="bodyMd" fontWeight="semibold">{getEmailTypeLabel(template.type)}</Text>
@@ -589,6 +693,12 @@ export default function EmailGenerator() {
         variant="tertiary"
         onClick={() => handlePreviewTemplate(template)}
         accessibilityLabel="Preview template"
+      />
+      <Button
+        icon={EditIcon}
+        variant="tertiary"
+        onClick={() => handleEditTemplate(template)}
+        accessibilityLabel="Edit template"
       />
       <Button
         icon={template.enabled ? XIcon : CheckIcon}
@@ -631,6 +741,10 @@ export default function EmailGenerator() {
           <Banner tone="success">Template status updated!</Banner>
         )}
         
+        {actionData?.updated && (
+          <Banner tone="success">Template updated successfully!</Banner>
+        )}
+        
         <Card>
           <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
             <div style={{ display: selectedTab === 0 ? 'block' : 'none' }}>
@@ -665,7 +779,13 @@ export default function EmailGenerator() {
                       ))}
                     </BlockStack>
                     
-                    <TextField
+                    <Banner>
+                  <p>
+                    <strong>Available variables:</strong> {"{{customer_name}}, {{store_name}}, {{current_balance}}, {{credit_amount}}, {{tier_name}}, {{previous_tier}}, {{order_id}}, {{currency}}"}
+                  </p>
+                </Banner>
+                
+                <TextField
                       label="Customer Name (for preview)"
                       value={customerName}
                       onChange={setCustomerName}
@@ -757,7 +877,7 @@ export default function EmailGenerator() {
                     <Divider />
                     
                     <InlineStack align="space-between">
-                      <Text as="h2" variant="headingMd">Generated Email</Text>
+                      <Text as="h2" variant="headingMd">Generated Email (Editable)</Text>
                       <InlineStack gap="200">
                         <Badge>{actionData.emailType}</Badge>
                         <Badge>{actionData.tone}</Badge>
@@ -770,54 +890,57 @@ export default function EmailGenerator() {
                         <input type="hidden" name="emailType" value={actionData.emailType} />
                         <input type="hidden" name="tone" value={actionData.tone} />
                         
+                        <input type="hidden" name="subject" value={genSubject} />
+                        <input type="hidden" name="preheader" value={genPreheader} />
+                        <input type="hidden" name="heading" value={genHeading} />
+                        <input type="hidden" name="body" value={genBody} />
+                        <input type="hidden" name="footer" value={genFooter} />
+                        <input type="hidden" name="buttonText" value={genButtonText} />
+                        
                         <TextField
                           label="Subject Line"
-                          value={actionData.generatedEmail.subject}
-                          name="subject"
+                          value={genSubject}
+                          onChange={setGenSubject}
                           autoComplete="off"
-                          readOnly
+                          helpText="You can edit this before saving"
                         />
                         
                         <TextField
                           label="Preheader Text"
-                          value={actionData.generatedEmail.preheader}
-                          name="preheader"
+                          value={genPreheader}
+                          onChange={setGenPreheader}
                           autoComplete="off"
-                          readOnly
                         />
                         
                         <TextField
                           label="Email Heading"
-                          value={actionData.generatedEmail.heading}
-                          name="heading"
+                          value={genHeading}
+                          onChange={setGenHeading}
                           autoComplete="off"
-                          readOnly
                         />
                         
                         <TextField
                           label="Email Body"
-                          value={actionData.generatedEmail.body}
-                          name="body"
+                          value={genBody}
+                          onChange={setGenBody}
                           multiline={6}
                           autoComplete="off"
-                          readOnly
+                          helpText="Edit the content as needed before saving"
                         />
                         
                         <TextField
                           label="Footer"
-                          value={actionData.generatedEmail.footer}
-                          name="footer"
+                          value={genFooter}
+                          onChange={setGenFooter}
                           autoComplete="off"
-                          readOnly
                         />
                         
-                        {actionData.generatedEmail.buttonText && (
+                        {(actionData.generatedEmail.buttonText || genButtonText) && (
                           <TextField
                             label="Button Text"
-                            value={actionData.generatedEmail.buttonText}
-                            name="buttonText"
+                            value={genButtonText}
+                            onChange={setGenButtonText}
                             autoComplete="off"
-                            readOnly
                           />
                         )}
                         
@@ -850,20 +973,20 @@ export default function EmailGenerator() {
                         backgroundColor: '#f9f9f9'
                       }}>
                         <div style={{ marginBottom: '10px' }}>
-                          <strong>Subject:</strong> {actionData.generatedEmail.subject}
+                          <strong>Subject:</strong> {genSubject}
                         </div>
                         <div style={{ marginBottom: '20px', color: '#666', fontSize: '14px' }}>
-                          <strong>Preview:</strong> {actionData.generatedEmail.preheader}
+                          <strong>Preview:</strong> {genPreheader}
                         </div>
-                        <h2 style={{ marginBottom: '15px' }}>{actionData.generatedEmail.heading}</h2>
+                        <h2 style={{ marginBottom: '15px' }}>{genHeading}</h2>
                         <div 
                           dangerouslySetInnerHTML={{ 
-                            __html: actionData.generatedEmail.body
+                            __html: genBody
                               .replace(/\{\{customer_name\}\}/g, customerName)
                               .replace(/\{\{store_name\}\}/g, shopName)
                           }} 
                         />
-                        {actionData.generatedEmail.buttonText && (
+                        {genButtonText && (
                           <div style={{ margin: '20px 0', textAlign: 'center' }}>
                             <button style={{
                               backgroundColor: '#1a1a1a',
@@ -874,12 +997,12 @@ export default function EmailGenerator() {
                               fontSize: '16px',
                               cursor: 'pointer'
                             }}>
-                              {actionData.generatedEmail.buttonText}
+                              {genButtonText}
                             </button>
                           </div>
                         )}
                         <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0', color: '#666', fontSize: '14px' }}>
-                          {actionData.generatedEmail.footer}
+                          {genFooter}
                         </div>
                       </div>
                     </BlockStack>
@@ -997,6 +1120,118 @@ export default function EmailGenerator() {
                 This action cannot be undone.
               </p>
             </TextContainer>
+          </Modal.Section>
+        </Modal>
+        
+        <Modal
+          open={editModalActive}
+          onClose={() => setEditModalActive(false)}
+          title={selectedTemplate ? `Edit: ${getEmailTypeLabel(selectedTemplate.type)}` : 'Edit Template'}
+          size="large"
+          primaryAction={{
+            content: 'Save Changes',
+            onAction: handleUpdateTemplate,
+            loading: isUpdating,
+          }}
+          secondaryActions={[
+            {
+              content: 'Cancel',
+              onAction: () => setEditModalActive(false),
+            },
+          ]}
+        >
+          <Modal.Section>
+            {selectedTemplate && (
+              <FormLayout>
+                <TextField
+                  label="Subject Line"
+                  value={editSubject}
+                  onChange={setEditSubject}
+                  autoComplete="off"
+                  helpText="Use {{customer_name}} and {{store_name}} for personalization"
+                />
+                
+                <TextField
+                  label="Preheader Text"
+                  value={editPreheader}
+                  onChange={setEditPreheader}
+                  autoComplete="off"
+                  helpText="Preview text that appears after the subject line"
+                />
+                
+                <TextField
+                  label="Email Heading"
+                  value={editHeading}
+                  onChange={setEditHeading}
+                  autoComplete="off"
+                />
+                
+                <TextField
+                  label="Email Body"
+                  value={editBody}
+                  onChange={setEditBody}
+                  multiline={8}
+                  autoComplete="off"
+                  helpText="Use HTML tags like <p>, <strong>, <em> for formatting"
+                />
+                
+                <TextField
+                  label="Footer"
+                  value={editFooter}
+                  onChange={setEditFooter}
+                  autoComplete="off"
+                />
+                
+                <TextField
+                  label="Button Text (optional)"
+                  value={editButtonText}
+                  onChange={setEditButtonText}
+                  autoComplete="off"
+                  helpText="Leave empty if no button is needed"
+                />
+                
+                <Divider />
+                
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">Live Preview</Text>
+                  <div style={{
+                    border: '1px solid #e0e0e0',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    backgroundColor: '#f9f9f9',
+                    maxHeight: '400px',
+                    overflow: 'auto'
+                  }}>
+                    <div style={{ marginBottom: '10px' }}>
+                      <strong>Subject:</strong> {editSubject}
+                    </div>
+                    <div style={{ marginBottom: '20px', color: '#666', fontSize: '14px' }}>
+                      <strong>Preview:</strong> {editPreheader}
+                    </div>
+                    <h2 style={{ marginBottom: '15px' }}>{editHeading}</h2>
+                    <div dangerouslySetInnerHTML={{ __html: editBody }} />
+                    {editButtonText && (
+                      <div style={{ margin: '20px 0', textAlign: 'center' }}>
+                        <button style={{
+                          backgroundColor: '#1a1a1a',
+                          color: 'white',
+                          padding: '12px 24px',
+                          borderRadius: '4px',
+                          border: 'none',
+                          fontSize: '16px',
+                          cursor: 'pointer'
+                        }}>
+                          {editButtonText}
+                        </button>
+                      </div>
+                    )}
+                    <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0', color: '#666', fontSize: '14px' }}>
+                      {editFooter}
+                    </div>
+                  </div>
+                </BlockStack>
+              </FormLayout>
+            )}
           </Modal.Section>
         </Modal>
       </BlockStack>
