@@ -1,5 +1,5 @@
 // app/routes/app.test-openai-minimal.tsx
-// Minimal version with fewer potential type issues
+// Minimal version with debug logging
 
 import { useState } from "react";
 import { json } from "@remix-run/node";
@@ -20,6 +20,14 @@ import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
+  
+  // Add debug logging
+  console.log("=== OPENAI KEY CHECK ===");
+  console.log("Key exists?", !!process.env.OPENAI_API_KEY);
+  console.log("Key starts with 'sk-'?", process.env.OPENAI_API_KEY?.startsWith('sk-'));
+  console.log("Key length:", process.env.OPENAI_API_KEY?.length);
+  console.log("=======================");
+  
   const hasKey = !!process.env.OPENAI_API_KEY;
   return json({ hasKey });
 };
