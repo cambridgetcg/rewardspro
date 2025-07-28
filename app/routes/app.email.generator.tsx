@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { Form, useActionData, useNavigation, useLoaderData } from "@remix-run/react";
+import { Form, useActionData, useNavigation, useLoaderData, useSubmit } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -17,7 +17,18 @@ import {
   Divider,
   Badge,
   InlineStack,
+  Tabs,
+  DataTable,
+  Modal,
+  TextContainer,
+  Icon,
 } from "@shopify/polaris";
+import {
+  ViewIcon,
+  DeleteIcon,
+  CheckIcon,
+  XIcon,
+} from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 // Comment out or remove if db.server doesn't exist yet
 // import { db } from "../db.server";
@@ -50,11 +61,28 @@ interface GeneratedEmail {
   buttonText?: string;
 }
 
+interface EmailTemplate {
+  id: string;
+  type: EmailTemplateType;
+  name: string;
+  subject: string;
+  preheader: string;
+  heading: string;
+  body: string;
+  footer: string;
+  tone: EmailTone;
+  buttonText: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface LoaderData {
   hasApiKey: boolean;
   shopName: string;
   shopEmail: string;
   currencyCode: string;
+  templates: EmailTemplate[];
 }
 
 interface ActionData {
@@ -65,6 +93,8 @@ interface ActionData {
   tone?: EmailTone;
   saved?: boolean;
   templateId?: string;
+  deleted?: boolean;
+  toggled?: boolean;
 }
 
 const EMAIL_TYPES: Array<{ label: string; value: EmailTemplateType }> = [
@@ -82,7 +112,7 @@ const EMAIL_TONES: Array<{ label: string; value: EmailTone }> = [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   
   // Check if OpenAI API key is configured
   const hasApiKey = !!process.env.OPENAI_API_KEY;
@@ -108,11 +138,55 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   };
   
+  // Fetch existing templates
+  // TODO: Uncomment when db is available
+  /*
+  const templates = await db.emailTemplate.findMany({
+    where: { shopDomain: session.shop },
+    orderBy: { updatedAt: 'desc' },
+  });
+  */
+  
+  // Mock templates for development
+  const templates: EmailTemplate[] = [
+    {
+      id: "1",
+      type: "WELCOME",
+      name: "Welcome - Friendly",
+      subject: "Welcome to {{store_name}}'s Rewards Program!",
+      preheader: "Start earning cashback on every purchase",
+      heading: "Welcome aboard, {{customer_name}}!",
+      body: "<p>We're thrilled to have you join our rewards program. From now on, every purchase you make earns you cash back!</p><p>Shop now and watch your rewards grow.</p>",
+      footer: "Thank you for being a valued customer.",
+      tone: "FRIENDLY",
+      buttonText: "Start Shopping",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      id: "2",
+      type: "CREDIT_EARNED",
+      name: "Credit Earned - Excited",
+      subject: "🎉 You just earned ${{credit_amount}}!",
+      preheader: "Your balance is now ${{current_balance}}",
+      heading: "Cha-ching! 💰",
+      body: "<p>Great news, {{customer_name}}! You've just earned <strong>${{credit_amount}}</strong> in store credit from your recent purchase.</p><p>Your new balance is <strong>${{current_balance}}</strong>. Why not treat yourself?</p>",
+      footer: "Happy shopping!",
+      tone: "EXCITED",
+      buttonText: "Use My Credit",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ];
+  
   return json<LoaderData>({ 
     hasApiKey,
     shopName: shopData.data.shop.name,
     shopEmail: shopData.data.shop.email,
     currencyCode: shopData.data.shop.currencyCode,
+    templates,
   });
 };
 
@@ -171,8 +245,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
   
   if (action === "save") {
-    // Commented out database save functionality
-    // Uncomment when db.server is available
+    // TODO: Uncomment when db is available
     /*
     const emailType = formData.get("emailType") as EmailTemplateType;
     const tone = formData.get("tone") as EmailTone;
@@ -238,6 +311,64 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       success: true,
       saved: true,
       templateId: "temp-id",
+    });
+  }
+  
+  if (action === "delete") {
+    const templateId = formData.get("templateId") as string;
+    
+    // TODO: Uncomment when db is available
+    /*
+    try {
+      await db.emailTemplate.delete({
+        where: { id: templateId },
+      });
+      
+      return json<ActionData>({
+        success: true,
+        deleted: true,
+      });
+    } catch (error) {
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to delete template",
+      });
+    }
+    */
+    
+    return json<ActionData>({
+      success: true,
+      deleted: true,
+    });
+  }
+  
+  if (action === "toggle") {
+    const templateId = formData.get("templateId") as string;
+    const enabled = formData.get("enabled") === "true";
+    
+    // TODO: Uncomment when db is available
+    /*
+    try {
+      await db.emailTemplate.update({
+        where: { id: templateId },
+        data: { enabled: !enabled },
+      });
+      
+      return json<ActionData>({
+        success: true,
+        toggled: true,
+      });
+    } catch (error) {
+      return json<ActionData>({
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to toggle template",
+      });
+    }
+    */
+    
+    return json<ActionData>({
+      success: true,
+      toggled: true,
     });
   }
   
@@ -360,9 +491,15 @@ Make sure to:
 }
 
 export default function EmailGenerator() {
-  const { hasApiKey, shopName, currencyCode } = useLoaderData<typeof loader>();
+  const { hasApiKey, shopName, currencyCode, templates } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const submit = useSubmit();
+  
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [previewModalActive, setPreviewModalActive] = useState(false);
+  const [deleteModalActive, setDeleteModalActive] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   
   const [emailType, setEmailType] = useState<EmailTemplateType>("WELCOME");
   const [tone, setTone] = useState<EmailTone>("FRIENDLY");
@@ -377,6 +514,98 @@ export default function EmailGenerator() {
   const isGenerating = navigation.state === "submitting" && navigation.formData?.get("action") === "generate";
   const isSaving = navigation.state === "submitting" && navigation.formData?.get("action") === "save";
   
+  const tabs = [
+    {
+      id: "generate",
+      content: "Generate New",
+      accessibilityLabel: "Generate new email template",
+      panelID: "generate-panel",
+    },
+    {
+      id: "templates",
+      content: "Saved Templates",
+      badge: templates.length.toString(),
+      accessibilityLabel: "View saved templates",
+      panelID: "templates-panel",
+    },
+  ];
+  
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+  
+  const getEmailTypeLabel = (type: EmailTemplateType) => {
+    return EMAIL_TYPES.find(t => t.value === type)?.label || type;
+  };
+  
+  const handleToggleTemplate = (template: EmailTemplate) => {
+    const formData = new FormData();
+    formData.append("action", "toggle");
+    formData.append("templateId", template.id);
+    formData.append("enabled", template.enabled.toString());
+    submit(formData, { method: "post" });
+  };
+  
+  const handleDeleteTemplate = (template: EmailTemplate) => {
+    setSelectedTemplate(template);
+    setDeleteModalActive(true);
+  };
+  
+  const confirmDelete = () => {
+    if (selectedTemplate) {
+      const formData = new FormData();
+      formData.append("action", "delete");
+      formData.append("templateId", selectedTemplate.id);
+      submit(formData, { method: "post" });
+    }
+    setDeleteModalActive(false);
+    setSelectedTemplate(null);
+  };
+  
+  const handlePreviewTemplate = (template: EmailTemplate) => {
+    setSelectedTemplate(template);
+    setPreviewModalActive(true);
+  };
+  
+  const rows = templates.map((template) => [
+    <InlineStack gap="200" blockAlign="center" key={`type-${template.id}`}>
+      <Text as="span" variant="bodyMd" fontWeight="semibold">{getEmailTypeLabel(template.type)}</Text>
+      <Badge tone={template.enabled ? "success" : undefined}>
+        {template.enabled ? "Active" : "Inactive"}
+      </Badge>
+    </InlineStack>,
+    <Badge key={`tone-${template.id}`}>{template.tone}</Badge>,
+    template.subject.substring(0, 50) + (template.subject.length > 50 ? "..." : ""),
+    formatDate(template.updatedAt),
+    <InlineStack gap="200" key={`actions-${template.id}`}>
+      <Button
+        icon={ViewIcon}
+        variant="tertiary"
+        onClick={() => handlePreviewTemplate(template)}
+        accessibilityLabel="Preview template"
+      />
+      <Button
+        icon={template.enabled ? XIcon : CheckIcon}
+        variant="tertiary"
+        onClick={() => handleToggleTemplate(template)}
+        accessibilityLabel={template.enabled ? "Disable template" : "Enable template"}
+      />
+      <Button
+        icon={DeleteIcon}
+        variant="tertiary"
+        tone="critical"
+        onClick={() => handleDeleteTemplate(template)}
+        accessibilityLabel="Delete template"
+      />
+    </InlineStack>,
+  ]);
+  
   return (
     <Page title="Email Template Generator">
       <BlockStack gap="600">
@@ -386,127 +615,6 @@ export default function EmailGenerator() {
           </Banner>
         )}
         
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">Generate Email Template</Text>
-            
-            <Form method="post">
-              <FormLayout>
-                <input type="hidden" name="action" value="generate" />
-                <input type="hidden" name="storeName" value={shopName} />
-                
-                <Select
-                  label="Email Type"
-                  options={EMAIL_TYPES}
-                  value={emailType}
-                  onChange={(value) => setEmailType(value as EmailTemplateType)}
-                  name="emailType"
-                />
-                
-                <Text as="h3" variant="headingSm">Tone</Text>
-                <BlockStack gap="200">
-                  {EMAIL_TONES.map((toneOption) => (
-                    <RadioButton
-                      key={toneOption.value}
-                      label={toneOption.label}
-                      checked={tone === toneOption.value}
-                      id={toneOption.value}
-                      name="tone"
-                      value={toneOption.value}
-                      onChange={(_, value) => setTone(value as EmailTone)}
-                    />
-                  ))}
-                </BlockStack>
-                
-                <TextField
-                  label="Customer Name (for preview)"
-                  value={customerName}
-                  onChange={setCustomerName}
-                  name="customerName"
-                  autoComplete="off"
-                />
-                
-                {(emailType === "CREDIT_EARNED") && (
-                  <>
-                    <TextField
-                      label={`Credit Amount (${currencyCode})`}
-                      value={creditAmount}
-                      onChange={setCreditAmount}
-                      name="creditAmount"
-                      type="number"
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label={`Current Balance (${currencyCode})`}
-                      value={currentBalance}
-                      onChange={setCurrentBalance}
-                      name="currentBalance"
-                      type="number"
-                      autoComplete="off"
-                    />
-                  </>
-                )}
-                
-                {emailType === "BALANCE_UPDATE" && (
-                  <TextField
-                    label={`Current Balance (${currencyCode})`}
-                    value={currentBalance}
-                    onChange={setCurrentBalance}
-                    name="currentBalance"
-                    type="number"
-                    autoComplete="off"
-                  />
-                )}
-                
-                {emailType === "TIER_UPGRADE" && (
-                  <>
-                    <TextField
-                      label="New Tier Name"
-                      value={tierName}
-                      onChange={setTierName}
-                      name="tierName"
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label="Previous Tier"
-                      value={previousTier}
-                      onChange={setPreviousTier}
-                      name="previousTier"
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label="Cashback Percent"
-                      value={cashbackPercent}
-                      onChange={setCashbackPercent}
-                      name="cashbackPercent"
-                      type="number"
-                      suffix="%"
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label="Additional Benefits (comma-separated)"
-                      value={benefits}
-                      onChange={setBenefits}
-                      name="benefits"
-                      multiline={2}
-                      autoComplete="off"
-                    />
-                  </>
-                )}
-                
-                <Button
-                  submit
-                  variant="primary"
-                  loading={isGenerating}
-                  disabled={!hasApiKey}
-                >
-                  Generate Email Template
-                </Button>
-              </FormLayout>
-            </Form>
-          </BlockStack>
-        </Card>
-        
         {actionData?.error && (
           <Banner tone="critical">{actionData.error}</Banner>
         )}
@@ -515,98 +623,319 @@ export default function EmailGenerator() {
           <Banner tone="success">Template saved successfully!</Banner>
         )}
         
-        {actionData?.generatedEmail && (
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between">
-                <Text as="h2" variant="headingMd">Generated Email</Text>
-                <InlineStack gap="200">
-                  <Badge>{actionData.emailType}</Badge>
-                  <Badge>{actionData.tone}</Badge>
-                </InlineStack>
-              </InlineStack>
-              
-              <Divider />
-              
-              <Form method="post">
-                <FormLayout>
-                  <input type="hidden" name="action" value="save" />
-                  <input type="hidden" name="emailType" value={actionData.emailType} />
-                  <input type="hidden" name="tone" value={actionData.tone} />
-                  
-                  <TextField
-                    label="Subject Line"
-                    value={actionData.generatedEmail.subject}
-                    name="subject"
-                    autoComplete="off"
-                    readOnly
-                  />
-                  
-                  <TextField
-                    label="Preheader Text"
-                    value={actionData.generatedEmail.preheader}
-                    name="preheader"
-                    autoComplete="off"
-                    readOnly
-                  />
-                  
-                  <TextField
-                    label="Email Heading"
-                    value={actionData.generatedEmail.heading}
-                    name="heading"
-                    autoComplete="off"
-                    readOnly
-                  />
-                  
-                  <TextField
-                    label="Email Body"
-                    value={actionData.generatedEmail.body}
-                    name="body"
-                    multiline={6}
-                    autoComplete="off"
-                    readOnly
-                  />
-                  
-                  <TextField
-                    label="Footer"
-                    value={actionData.generatedEmail.footer}
-                    name="footer"
-                    autoComplete="off"
-                    readOnly
-                  />
-                  
-                  {actionData.generatedEmail.buttonText && (
-                    <TextField
-                      label="Button Text"
-                      value={actionData.generatedEmail.buttonText}
-                      name="buttonText"
-                      autoComplete="off"
-                      readOnly
+        {actionData?.deleted && (
+          <Banner tone="success">Template deleted successfully!</Banner>
+        )}
+        
+        {actionData?.toggled && (
+          <Banner tone="success">Template status updated!</Banner>
+        )}
+        
+        <Card>
+          <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
+            <div style={{ display: selectedTab === 0 ? 'block' : 'none' }}>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Generate Email Template</Text>
+                
+                <Form method="post">
+                  <FormLayout>
+                    <input type="hidden" name="action" value="generate" />
+                    <input type="hidden" name="storeName" value={shopName} />
+                    
+                    <Select
+                      label="Email Type"
+                      options={EMAIL_TYPES}
+                      value={emailType}
+                      onChange={(value) => setEmailType(value as EmailTemplateType)}
+                      name="emailType"
                     />
-                  )}
-                  
-                  <InlineStack gap="400">
+                    
+                    <Text as="h3" variant="headingSm">Tone</Text>
+                    <BlockStack gap="200">
+                      {EMAIL_TONES.map((toneOption) => (
+                        <RadioButton
+                          key={toneOption.value}
+                          label={toneOption.label}
+                          checked={tone === toneOption.value}
+                          id={toneOption.value}
+                          name="tone"
+                          value={toneOption.value}
+                          onChange={(_, value) => setTone(value as EmailTone)}
+                        />
+                      ))}
+                    </BlockStack>
+                    
+                    <TextField
+                      label="Customer Name (for preview)"
+                      value={customerName}
+                      onChange={setCustomerName}
+                      name="customerName"
+                      autoComplete="off"
+                    />
+                    
+                    {(emailType === "CREDIT_EARNED") && (
+                      <>
+                        <TextField
+                          label={`Credit Amount (${currencyCode})`}
+                          value={creditAmount}
+                          onChange={setCreditAmount}
+                          name="creditAmount"
+                          type="number"
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label={`Current Balance (${currencyCode})`}
+                          value={currentBalance}
+                          onChange={setCurrentBalance}
+                          name="currentBalance"
+                          type="number"
+                          autoComplete="off"
+                        />
+                      </>
+                    )}
+                    
+                    {emailType === "BALANCE_UPDATE" && (
+                      <TextField
+                        label={`Current Balance (${currencyCode})`}
+                        value={currentBalance}
+                        onChange={setCurrentBalance}
+                        name="currentBalance"
+                        type="number"
+                        autoComplete="off"
+                      />
+                    )}
+                    
+                    {emailType === "TIER_UPGRADE" && (
+                      <>
+                        <TextField
+                          label="New Tier Name"
+                          value={tierName}
+                          onChange={setTierName}
+                          name="tierName"
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="Previous Tier"
+                          value={previousTier}
+                          onChange={setPreviousTier}
+                          name="previousTier"
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="Cashback Percent"
+                          value={cashbackPercent}
+                          onChange={setCashbackPercent}
+                          name="cashbackPercent"
+                          type="number"
+                          suffix="%"
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="Additional Benefits (comma-separated)"
+                          value={benefits}
+                          onChange={setBenefits}
+                          name="benefits"
+                          multiline={2}
+                          autoComplete="off"
+                        />
+                      </>
+                    )}
+                    
                     <Button
                       submit
                       variant="primary"
-                      loading={isSaving}
+                      loading={isGenerating}
+                      disabled={!hasApiKey}
                     >
-                      Save Template
+                      Generate Email Template
                     </Button>
-                    <Button
-                      url="/app/email-generator"
-                      variant="plain"
-                    >
-                      Generate Another
-                    </Button>
-                  </InlineStack>
-                </FormLayout>
-              </Form>
-              
-              <Divider />
-              
-              <BlockStack gap="200">
-                <Text as="h3" variant="headingSm">Preview</Text>
+                  </FormLayout>
+                </Form>
+                
+                {actionData?.generatedEmail && (
+                  <>
+                    <Divider />
+                    
+                    <InlineStack align="space-between">
+                      <Text as="h2" variant="headingMd">Generated Email</Text>
+                      <InlineStack gap="200">
+                        <Badge>{actionData.emailType}</Badge>
+                        <Badge>{actionData.tone}</Badge>
+                      </InlineStack>
+                    </InlineStack>
+                    
+                    <Form method="post">
+                      <FormLayout>
+                        <input type="hidden" name="action" value="save" />
+                        <input type="hidden" name="emailType" value={actionData.emailType} />
+                        <input type="hidden" name="tone" value={actionData.tone} />
+                        
+                        <TextField
+                          label="Subject Line"
+                          value={actionData.generatedEmail.subject}
+                          name="subject"
+                          autoComplete="off"
+                          readOnly
+                        />
+                        
+                        <TextField
+                          label="Preheader Text"
+                          value={actionData.generatedEmail.preheader}
+                          name="preheader"
+                          autoComplete="off"
+                          readOnly
+                        />
+                        
+                        <TextField
+                          label="Email Heading"
+                          value={actionData.generatedEmail.heading}
+                          name="heading"
+                          autoComplete="off"
+                          readOnly
+                        />
+                        
+                        <TextField
+                          label="Email Body"
+                          value={actionData.generatedEmail.body}
+                          name="body"
+                          multiline={6}
+                          autoComplete="off"
+                          readOnly
+                        />
+                        
+                        <TextField
+                          label="Footer"
+                          value={actionData.generatedEmail.footer}
+                          name="footer"
+                          autoComplete="off"
+                          readOnly
+                        />
+                        
+                        {actionData.generatedEmail.buttonText && (
+                          <TextField
+                            label="Button Text"
+                            value={actionData.generatedEmail.buttonText}
+                            name="buttonText"
+                            autoComplete="off"
+                            readOnly
+                          />
+                        )}
+                        
+                        <InlineStack gap="400">
+                          <Button
+                            submit
+                            variant="primary"
+                            loading={isSaving}
+                          >
+                            Save Template
+                          </Button>
+                          <Button
+                            onClick={() => window.location.reload()}
+                            variant="plain"
+                          >
+                            Generate Another
+                          </Button>
+                        </InlineStack>
+                      </FormLayout>
+                    </Form>
+                    
+                    <Divider />
+                    
+                    <BlockStack gap="200">
+                      <Text as="h3" variant="headingSm">Preview</Text>
+                      <div style={{
+                        border: '1px solid #e0e0e0',
+                        borderRadius: '8px',
+                        padding: '20px',
+                        backgroundColor: '#f9f9f9'
+                      }}>
+                        <div style={{ marginBottom: '10px' }}>
+                          <strong>Subject:</strong> {actionData.generatedEmail.subject}
+                        </div>
+                        <div style={{ marginBottom: '20px', color: '#666', fontSize: '14px' }}>
+                          <strong>Preview:</strong> {actionData.generatedEmail.preheader}
+                        </div>
+                        <h2 style={{ marginBottom: '15px' }}>{actionData.generatedEmail.heading}</h2>
+                        <div 
+                          dangerouslySetInnerHTML={{ 
+                            __html: actionData.generatedEmail.body
+                              .replace(/\{\{customer_name\}\}/g, customerName)
+                              .replace(/\{\{store_name\}\}/g, shopName)
+                          }} 
+                        />
+                        {actionData.generatedEmail.buttonText && (
+                          <div style={{ margin: '20px 0', textAlign: 'center' }}>
+                            <button style={{
+                              backgroundColor: '#1a1a1a',
+                              color: 'white',
+                              padding: '12px 24px',
+                              borderRadius: '4px',
+                              border: 'none',
+                              fontSize: '16px',
+                              cursor: 'pointer'
+                            }}>
+                              {actionData.generatedEmail.buttonText}
+                            </button>
+                          </div>
+                        )}
+                        <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0', color: '#666', fontSize: '14px' }}>
+                          {actionData.generatedEmail.footer}
+                        </div>
+                      </div>
+                    </BlockStack>
+                  </>
+                )}
+              </BlockStack>
+            </div>
+            
+            <div style={{ display: selectedTab === 1 ? 'block' : 'none' }}>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Saved Email Templates</Text>
+                
+                {templates.length === 0 ? (
+                  <Banner>
+                    No templates saved yet. Generate your first template to get started!
+                  </Banner>
+                ) : (
+                  <DataTable
+                    columnContentTypes={[
+                      'text',
+                      'text',
+                      'text',
+                      'text',
+                      'text',
+                    ]}
+                    headings={[
+                      'Type',
+                      'Tone',
+                      'Subject',
+                      'Last Updated',
+                      'Actions',
+                    ]}
+                    rows={rows}
+                  />
+                )}
+              </BlockStack>
+            </div>
+          </Tabs>
+        </Card>
+        
+        <Modal
+          open={previewModalActive}
+          onClose={() => setPreviewModalActive(false)}
+          title={selectedTemplate ? `Preview: ${getEmailTypeLabel(selectedTemplate.type)}` : 'Preview'}
+          size="large"
+        >
+          <Modal.Section>
+            {selectedTemplate && (
+              <BlockStack gap="400">
+                <InlineStack gap="200">
+                  <Badge>{selectedTemplate.tone}</Badge>
+                  <Badge tone={selectedTemplate.enabled ? "success" : undefined}>
+                    {selectedTemplate.enabled ? "Active" : "Inactive"}
+                  </Badge>
+                </InlineStack>
+                
                 <div style={{
                   border: '1px solid #e0e0e0',
                   borderRadius: '8px',
@@ -614,20 +943,14 @@ export default function EmailGenerator() {
                   backgroundColor: '#f9f9f9'
                 }}>
                   <div style={{ marginBottom: '10px' }}>
-                    <strong>Subject:</strong> {actionData.generatedEmail.subject}
+                    <strong>Subject:</strong> {selectedTemplate.subject}
                   </div>
                   <div style={{ marginBottom: '20px', color: '#666', fontSize: '14px' }}>
-                    <strong>Preview:</strong> {actionData.generatedEmail.preheader}
+                    <strong>Preview:</strong> {selectedTemplate.preheader}
                   </div>
-                  <h2 style={{ marginBottom: '15px' }}>{actionData.generatedEmail.heading}</h2>
-                  <div 
-                    dangerouslySetInnerHTML={{ 
-                      __html: actionData.generatedEmail.body
-                        .replace(/\{\{customer_name\}\}/g, customerName)
-                        .replace(/\{\{store_name\}\}/g, shopName)
-                    }} 
-                  />
-                  {actionData.generatedEmail.buttonText && (
+                  <h2 style={{ marginBottom: '15px' }}>{selectedTemplate.heading}</h2>
+                  <div dangerouslySetInnerHTML={{ __html: selectedTemplate.body }} />
+                  {selectedTemplate.buttonText && (
                     <div style={{ margin: '20px 0', textAlign: 'center' }}>
                       <button style={{
                         backgroundColor: '#1a1a1a',
@@ -638,18 +961,44 @@ export default function EmailGenerator() {
                         fontSize: '16px',
                         cursor: 'pointer'
                       }}>
-                        {actionData.generatedEmail.buttonText}
+                        {selectedTemplate.buttonText}
                       </button>
                     </div>
                   )}
                   <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0', color: '#666', fontSize: '14px' }}>
-                    {actionData.generatedEmail.footer}
+                    {selectedTemplate.footer}
                   </div>
                 </div>
               </BlockStack>
-            </BlockStack>
-          </Card>
-        )}
+            )}
+          </Modal.Section>
+        </Modal>
+        
+        <Modal
+          open={deleteModalActive}
+          onClose={() => setDeleteModalActive(false)}
+          title="Delete template?"
+          primaryAction={{
+            content: 'Delete',
+            onAction: confirmDelete,
+            destructive: true,
+          }}
+          secondaryActions={[
+            {
+              content: 'Cancel',
+              onAction: () => setDeleteModalActive(false),
+            },
+          ]}
+        >
+          <Modal.Section>
+            <TextContainer>
+              <p>
+                Are you sure you want to delete the "{selectedTemplate && getEmailTypeLabel(selectedTemplate.type)}" template? 
+                This action cannot be undone.
+              </p>
+            </TextContainer>
+          </Modal.Section>
+        </Modal>
       </BlockStack>
     </Page>
   );
