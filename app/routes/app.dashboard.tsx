@@ -2,721 +2,37 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, Link } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
-import { TransactionStatus, TierChangeType, LedgerEntryType, AssignmentType } from "@prisma/client";
-import { subDays, startOfMonth, startOfWeek, format, differenceInDays } from "date-fns";
-
-interface DashboardMetrics {
-  // Customer Metrics
-  totalCustomers: number;
-  activeCustomers: number;
-  customerGrowth: number;
-  avgDaysSinceLastOrder: number;
-  customersAtRisk: number;
-  
-  // Financial Metrics
-  totalRevenue30Days: number;
-  totalCashbackThisMonth: number;
-  totalCashbackAllTime: number;
-  activeStoreCredit: number;
-  storeCreditUtilization: number;
-  unreconciledCredit: number;
-  
-  // Order Metrics
-  averageOrderValue: number;
-  aovChange: number;
-  totalTransactions: number;
-  transactionGrowth: number;
-  conversionRate: number;
-  repeatPurchaseRate: number;
-  
-  // Tier Metrics
-  tierUpgradesThisMonth: number;
-  tierDowngradesThisMonth: number;
-  manualTierAssignments: number;
-  avgCustomerLifetimeValue: number;
-}
-
-interface TierAnalytics {
-  tierId: string;
-  tierName: string;
-  cashbackPercent: number;
-  memberCount: number;
-  percentage: number;
-  avgSpending: number;
-  avgOrderValue: number;
-  retentionRate: number;
-  manualAssignments: number;
-}
-
-interface RecentActivity {
-  id: string;
-  type: 'new_customer' | 'cashback_earned' | 'tier_change' | 'manual_adjustment' | 'credit_sync';
-  message: string;
-  timestamp: Date;
-  metadata?: any;
-}
-
-interface EngagementMetrics {
-  daily: number[];
-  weekly: number[];
-  labels: string[];
-}
-
-interface CreditReconciliation {
-  totalCustomers: number;
-  syncedToday: number;
-  syncedThisWeek: number;
-  neverSynced: number;
-  outOfSync: number;
-}
+import { 
+  DashboardService, 
+  type DashboardMetrics,
+  type TierDistribution,
+  type RecentActivity,
+  type CustomerInsight,
+  type EngagementMetrics,
+  type CreditReconciliation,
+  type UpgradeOpportunity
+} from "../services/dashboard.server";
+import { TierChangeType } from "@prisma/client";
+import { format } from "date-fns";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
-  const shopDomain = session.shop;
+  const service = new DashboardService(session.shop);
   
-  const [
-    metrics,
-    tierAnalytics,
-    recentActivity,
-    topCustomers,
-    engagementMetrics,
-    creditReconciliation,
-    tierChangesSummary
-  ] = await Promise.all([
-    getDashboardMetrics(shopDomain),
-    getTierAnalytics(shopDomain),
-    getRecentActivity(shopDomain),
-    getTopCustomers(shopDomain),
-    getEngagementMetrics(shopDomain),
-    getCreditReconciliation(shopDomain),
-    getTierChangesSummary(shopDomain)
-  ]);
-
-  return json({ 
-    metrics,
-    tierAnalytics,
-    recentActivity,
-    topCustomers,
-    engagementMetrics,
-    creditReconciliation,
-    tierChangesSummary
-  });
-}
-
-async function getDashboardMetrics(shopDomain: string): Promise<DashboardMetrics> {
-  const now = new Date();
-  const startOfThisMonth = startOfMonth(now);
-  const thirtyDaysAgo = subDays(now, 30);
-  const sixtyDaysAgo = subDays(now, 60);
-
-  // Customer metrics
-  const totalCustomers = await prisma.customer.count({
-    where: { shopDomain }
-  });
+  const dashboardData = await service.getDashboardData();
   
-  const customersLast30Days = await prisma.customer.count({
-    where: { 
-      shopDomain,
-      createdAt: { gte: thirtyDaysAgo } 
-    }
-  });
-  
-  const customersPrevious30Days = await prisma.customer.count({
-    where: {
-      shopDomain,
-      createdAt: {
-        gte: sixtyDaysAgo,
-        lt: thirtyDaysAgo
-      }
-    }
-  });
-  
-  const customerGrowth = customersPrevious30Days > 0 
-    ? ((customersLast30Days - customersPrevious30Days) / customersPrevious30Days) * 100 
-    : 100;
-
-  // Active customers (ordered in last 30 days)
-  const activeCustomers = await prisma.customer.count({
-    where: {
-      shopDomain,
-      analytics: {
-        lastOrderDate: { gte: thirtyDaysAgo }
-      }
-    }
-  });
-
-  // Average days since last order and customers at risk
-  const customerAnalytics = await prisma.customerAnalytics.findMany({
-    where: { shopDomain },
-    select: { daysSinceLastOrder: true }
-  });
-
-  const avgDaysSinceLastOrder = customerAnalytics.length > 0
-    ? customerAnalytics.reduce((sum, c) => sum + (c.daysSinceLastOrder || 0), 0) / customerAnalytics.length
-    : 0;
-
-  const customersAtRisk = customerAnalytics.filter(
-    c => c.daysSinceLastOrder && c.daysSinceLastOrder > 90
-  ).length;
-
-  // Financial metrics
-  const revenue30Days = await prisma.cashbackTransaction.aggregate({
-    where: {
-      shopDomain,
-      createdAt: { gte: thirtyDaysAgo },
-      status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-    },
-    _sum: { orderAmount: true }
-  });
-
-  const cashbackThisMonth = await prisma.cashbackTransaction.aggregate({
-    where: {
-      shopDomain,
-      createdAt: { gte: startOfThisMonth },
-      status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-    },
-    _sum: { cashbackAmount: true }
-  });
-
-  const cashbackAllTime = await prisma.cashbackTransaction.aggregate({
-    where: {
-      shopDomain,
-      status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-    },
-    _sum: { cashbackAmount: true }
-  });
-
-  const activeCredit = await prisma.customer.aggregate({
-    where: { shopDomain },
-    _sum: { storeCredit: true }
-  });
-
-  // Store credit utilization (credits used vs earned)
-  const creditsUsed = await prisma.storeCreditLedger.aggregate({
-    where: {
-      shopDomain,
-      type: LedgerEntryType.ORDER_PAYMENT,
-      createdAt: { gte: thirtyDaysAgo }
-    },
-    _sum: { amount: true }
-  });
-
-  const storeCreditUtilization = (cashbackAllTime._sum.cashbackAmount || 0) > 0
-    ? (Math.abs(creditsUsed._sum.amount || 0) / (cashbackAllTime._sum.cashbackAmount || 1)) * 100
-    : 0;
-
-  // Unreconciled credit
-  const unreconciledCredit = await prisma.storeCreditLedger.count({
-    where: {
-      shopDomain,
-      reconciledAt: null,
-      source: { in: ['APP_CASHBACK', 'APP_MANUAL'] }
-    }
-  });
-
-  // Order metrics
-  const ordersLast30Days = await prisma.cashbackTransaction.findMany({
-    where: {
-      shopDomain,
-      createdAt: { gte: thirtyDaysAgo },
-      status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-    }
-  });
-
-  const ordersPrevious30Days = await prisma.cashbackTransaction.findMany({
-    where: {
-      shopDomain,
-      createdAt: {
-        gte: sixtyDaysAgo,
-        lt: thirtyDaysAgo
-      },
-      status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-    }
-  });
-
-  const currentAOV = ordersLast30Days.length > 0
-    ? ordersLast30Days.reduce((sum, order) => sum + order.orderAmount, 0) / ordersLast30Days.length
-    : 0;
-
-  const previousAOV = ordersPrevious30Days.length > 0
-    ? ordersPrevious30Days.reduce((sum, order) => sum + order.orderAmount, 0) / ordersPrevious30Days.length
-    : 0;
-
-  const aovChange = previousAOV > 0
-    ? ((currentAOV - previousAOV) / previousAOV) * 100
-    : 0;
-
-  const totalTransactions = ordersLast30Days.length;
-  const transactionGrowth = ordersPrevious30Days.length > 0
-    ? ((ordersLast30Days.length - ordersPrevious30Days.length) / ordersPrevious30Days.length) * 100
-    : 100;
-
-  // Conversion and repeat purchase rates
-  const customersWithTransactions = await prisma.customer.count({
-    where: {
-      shopDomain,
-      transactions: {
-        some: {
-          status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-        }
-      }
-    }
-  });
-
-  const customersWithMultipleTransactions = await prisma.customer.count({
-    where: {
-      shopDomain,
-      analytics: {
-        orderCount: { gt: 1 }
-      }
-    }
-  });
-
-  const conversionRate = totalCustomers > 0 
-    ? (customersWithTransactions / totalCustomers) * 100 
-    : 0;
-
-  const repeatPurchaseRate = customersWithTransactions > 0
-    ? (customersWithMultipleTransactions / customersWithTransactions) * 100
-    : 0;
-
-  // Tier metrics
-  const tierUpgrades = await prisma.tierChangeLog.count({
-    where: {
-      customer: { shopDomain },
-      createdAt: { gte: startOfThisMonth },
-      changeType: { in: [TierChangeType.AUTOMATIC_UPGRADE, TierChangeType.MANUAL_OVERRIDE] }
-    }
-  });
-
-  const tierDowngrades = await prisma.tierChangeLog.count({
-    where: {
-      customer: { shopDomain },
-      createdAt: { gte: startOfThisMonth },
-      changeType: TierChangeType.AUTOMATIC_DOWNGRADE
-    }
-  });
-
-  const manualAssignments = await prisma.customerMembership.count({
-    where: {
-      customer: { shopDomain },
-      assignmentType: AssignmentType.MANUAL,
-      isActive: true
-    }
-  });
-
-  // Average customer lifetime value
-  const avgLifetimeValue = await prisma.customerAnalytics.aggregate({
-    where: { shopDomain },
-    _avg: { lifetimeSpending: true }
-  });
-
-  return {
-    totalCustomers,
-    activeCustomers,
-    customerGrowth: Math.round(customerGrowth * 10) / 10,
-    avgDaysSinceLastOrder: Math.round(avgDaysSinceLastOrder),
-    customersAtRisk,
-    totalRevenue30Days: revenue30Days._sum.orderAmount || 0,
-    totalCashbackThisMonth: cashbackThisMonth._sum.cashbackAmount || 0,
-    totalCashbackAllTime: cashbackAllTime._sum.cashbackAmount || 0,
-    activeStoreCredit: activeCredit._sum.storeCredit || 0,
-    storeCreditUtilization: Math.round(storeCreditUtilization * 10) / 10,
-    unreconciledCredit,
-    averageOrderValue: currentAOV,
-    aovChange: Math.round(aovChange * 10) / 10,
-    totalTransactions,
-    transactionGrowth: Math.round(transactionGrowth * 10) / 10,
-    conversionRate: Math.round(conversionRate * 10) / 10,
-    repeatPurchaseRate: Math.round(repeatPurchaseRate * 10) / 10,
-    tierUpgradesThisMonth: tierUpgrades,
-    tierDowngradesThisMonth: tierDowngrades,
-    manualTierAssignments: manualAssignments,
-    avgCustomerLifetimeValue: avgLifetimeValue._avg.lifetimeSpending || 0
-  };
-}
-
-async function getTierAnalytics(shopDomain: string): Promise<TierAnalytics[]> {
-  const tiers = await prisma.tier.findMany({
-    where: { 
-      shopDomain,
-      isActive: true 
-    },
-    orderBy: { cashbackPercent: 'desc' }
-  });
-
-  const analytics = await Promise.all(
-    tiers.map(async (tier) => {
-      const memberships = await prisma.customerMembership.findMany({
-        where: {
-          tierId: tier.id,
-          isActive: true
-        },
-        include: {
-          customer: {
-            include: {
-              analytics: true
-            }
-          }
-        }
-      });
-
-      const memberCount = memberships.length;
-      const manualAssignments = memberships.filter(
-        m => m.assignmentType === AssignmentType.MANUAL
-      ).length;
-
-      // Calculate average spending and AOV
-      const avgSpending = memberships.reduce(
-        (sum, m) => sum + (m.customer.analytics?.yearlySpending || 0),
-        0
-      ) / (memberCount || 1);
-
-      const avgOrderValue = memberships.reduce(
-        (sum, m) => sum + (m.customer.analytics?.avgOrderValue || 0),
-        0
-      ) / (memberCount || 1);
-
-      // Calculate retention rate (customers who ordered in last 30 days)
-      const activeInTier = memberships.filter(
-        m => m.customer.analytics?.daysSinceLastOrder && 
-             m.customer.analytics.daysSinceLastOrder <= 30
-      ).length;
-
-      const retentionRate = memberCount > 0
-        ? (activeInTier / memberCount) * 100
-        : 0;
-
-      return {
-        tierId: tier.id,
-        tierName: tier.name,
-        cashbackPercent: tier.cashbackPercent,
-        memberCount,
-        percentage: 0, // Will calculate after
-        avgSpending,
-        avgOrderValue,
-        retentionRate: Math.round(retentionRate * 10) / 10,
-        manualAssignments
-      };
-    })
-  );
-
-  // Calculate percentages
-  const totalMembers = analytics.reduce((sum, tier) => sum + tier.memberCount, 0);
-  return analytics.map(tier => ({
-    ...tier,
-    percentage: totalMembers > 0 
-      ? Math.round((tier.memberCount / totalMembers) * 1000) / 10 
-      : 0
-  }));
-}
-
-async function getRecentActivity(shopDomain: string, limit: number = 10): Promise<RecentActivity[]> {
-  const activities: RecentActivity[] = [];
-
-  // Get various activity types
-  const [
-    recentCustomers,
-    recentCashback,
-    recentTierChanges,
-    recentCreditAdjustments,
-    recentSyncs
-  ] = await Promise.all([
-    // New customers
-    prisma.customer.findMany({
-      where: {
-        shopDomain,
-        createdAt: { gte: subDays(new Date(), 7) }
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit
-    }),
-    
-    // Cashback earned
-    prisma.cashbackTransaction.findMany({
-      where: {
-        shopDomain,
-        createdAt: { gte: subDays(new Date(), 7) },
-        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-      },
-      include: { customer: true },
-      orderBy: { createdAt: 'desc' },
-      take: limit
-    }),
-    
-    // Tier changes
-    prisma.tierChangeLog.findMany({
-      where: {
-        customer: { shopDomain },
-        createdAt: { gte: subDays(new Date(), 7) }
-      },
-      include: {
-        customer: true,
-        fromTier: true,
-        toTier: true
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit
-    }),
-    
-    // Manual credit adjustments
-    prisma.storeCreditLedger.findMany({
-      where: {
-        shopDomain,
-        type: LedgerEntryType.MANUAL_ADJUSTMENT,
-        createdAt: { gte: subDays(new Date(), 7) }
-      },
-      include: { customer: true },
-      orderBy: { createdAt: 'desc' },
-      take: limit
-    }),
-    
-    // Credit syncs
-    prisma.customer.findMany({
-      where: {
-        shopDomain,
-        lastSyncedAt: { gte: subDays(new Date(), 1) }
-      },
-      orderBy: { lastSyncedAt: 'desc' },
-      take: limit
-    })
-  ]);
-
-  // Process activities
-  recentCustomers.forEach(customer => {
-    activities.push({
-      id: customer.id,
-      type: 'new_customer',
-      message: `New customer joined: ${customer.email}`,
-      timestamp: customer.createdAt
-    });
-  });
-
-  recentCashback.forEach(transaction => {
-    activities.push({
-      id: transaction.id,
-      type: 'cashback_earned',
-      message: `${transaction.customer.email} earned $${transaction.cashbackAmount.toFixed(2)} cashback`,
-      timestamp: transaction.createdAt,
-      metadata: { amount: transaction.cashbackAmount }
-    });
-  });
-
-  recentTierChanges.forEach(change => {
-    const changeTypeText = change.changeType === TierChangeType.AUTOMATIC_UPGRADE ? 'upgraded' :
-                          change.changeType === TierChangeType.AUTOMATIC_DOWNGRADE ? 'downgraded' :
-                          change.changeType === TierChangeType.MANUAL_OVERRIDE ? 'manually assigned' :
-                          'moved';
-    activities.push({
-      id: change.id,
-      type: 'tier_change',
-      message: `${change.customer.email} ${changeTypeText} to ${change.toTier.name}`,
-      timestamp: change.createdAt,
-      metadata: { 
-        fromTier: change.fromTier?.name, 
-        toTier: change.toTier.name,
-        changeType: change.changeType 
-      }
-    });
-  });
-
-  recentCreditAdjustments.forEach(adjustment => {
-    activities.push({
-      id: adjustment.id,
-      type: 'manual_adjustment',
-      message: `Credit ${adjustment.amount >= 0 ? 'added' : 'deducted'} $${Math.abs(adjustment.amount).toFixed(2)} for ${adjustment.customer.email}`,
-      timestamp: adjustment.createdAt,
-      metadata: { amount: adjustment.amount }
-    });
-  });
-
-  recentSyncs.forEach(customer => {
-    if (customer.lastSyncedAt) {
-      activities.push({
-        id: customer.id,
-        type: 'credit_sync',
-        message: `Store credit synced for ${customer.email}`,
-        timestamp: customer.lastSyncedAt
-      });
-    }
-  });
-
-  // Sort and limit
-  return activities
-    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-    .slice(0, limit);
-}
-
-async function getTopCustomers(shopDomain: string, limit: number = 5) {
-  const customers = await prisma.customer.findMany({
-    where: { shopDomain },
-    include: {
-      membershipHistory: {
-        where: { isActive: true },
-        include: { tier: true }
-      },
-      analytics: true
-    },
-    orderBy: {
-      analytics: {
-        lifetimeSpending: 'desc'
-      }
-    },
-    take: limit
-  });
-
-  return customers.map(customer => ({
-    id: customer.id,
-    email: customer.email,
-    totalSpending: customer.analytics?.lifetimeSpending || 0,
-    totalEarned: customer.totalEarned,
-    currentTier: customer.membershipHistory[0]?.tier,
-    daysSinceLastOrder: customer.analytics?.daysSinceLastOrder || null,
-    orderCount: customer.analytics?.orderCount || 0
-  }));
-}
-
-async function getEngagementMetrics(shopDomain: string): Promise<EngagementMetrics> {
-  const now = new Date();
-  const sevenDaysAgo = subDays(now, 7);
-  
-  // Get daily order counts for last 7 days
-  const dailyOrders = await Promise.all(
-    Array.from({ length: 7 }, (_, i) => {
-      const date = subDays(now, 6 - i);
-      const nextDate = subDays(now, 5 - i);
-      
-      return prisma.cashbackTransaction.count({
-        where: {
-          shopDomain,
-          createdAt: {
-            gte: date,
-            lt: i === 6 ? now : nextDate
-          },
-          status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-        }
-      });
-    })
-  );
-
-  // Get weekly order counts for last 4 weeks
-  const weeklyOrders = await Promise.all(
-    Array.from({ length: 4 }, (_, i) => {
-      const weekStart = startOfWeek(subDays(now, (3 - i) * 7));
-      const weekEnd = startOfWeek(subDays(now, (2 - i) * 7));
-      
-      return prisma.cashbackTransaction.count({
-        where: {
-          shopDomain,
-          createdAt: {
-            gte: weekStart,
-            lt: i === 3 ? now : weekEnd
-          },
-          status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-        }
-      });
-    })
-  );
-
-  const dailyLabels = Array.from({ length: 7 }, (_, i) => 
-    format(subDays(now, 6 - i), 'MMM d')
-  );
-
-  const weeklyLabels = Array.from({ length: 4 }, (_, i) => 
-    `Week of ${format(startOfWeek(subDays(now, (3 - i) * 7)), 'MMM d')}`
-  );
-
-  return {
-    daily: dailyOrders,
-    weekly: weeklyOrders,
-    labels: [...dailyLabels, ...weeklyLabels]
-  };
-}
-
-async function getCreditReconciliation(shopDomain: string): Promise<CreditReconciliation> {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekAgo = subDays(today, 7);
-
-  const [
-    totalCustomers,
-    syncedToday,
-    syncedThisWeek,
-    neverSynced
-  ] = await Promise.all([
-    prisma.customer.count({
-      where: { shopDomain }
-    }),
-    
-    prisma.customer.count({
-      where: {
-        shopDomain,
-        lastSyncedAt: { gte: today }
-      }
-    }),
-    
-    prisma.customer.count({
-      where: {
-        shopDomain,
-        lastSyncedAt: { gte: weekAgo }
-      }
-    }),
-    
-    prisma.customer.count({
-      where: {
-        shopDomain,
-        lastSyncedAt: null
-      }
-    })
-  ]);
-
-  const outOfSync = await prisma.customer.count({
-    where: {
-      shopDomain,
-      OR: [
-        { lastSyncedAt: null },
-        { lastSyncedAt: { lt: weekAgo } }
-      ]
-    }
-  });
-
-  return {
-    totalCustomers,
-    syncedToday,
-    syncedThisWeek,
-    neverSynced,
-    outOfSync
-  };
-}
-
-async function getTierChangesSummary(shopDomain: string) {
-  const thirtyDaysAgo = subDays(new Date(), 30);
-  
-  const changes = await prisma.tierChangeLog.groupBy({
-    by: ['changeType'],
-    where: {
-      customer: { shopDomain },
-      createdAt: { gte: thirtyDaysAgo }
-    },
-    _count: true
-  });
-
-  return changes.reduce((acc, change) => {
-    acc[change.changeType] = change._count;
-    return acc;
-  }, {} as Record<TierChangeType, number>);
+  return json(dashboardData);
 }
 
 export default function EnhancedDashboard() {
   const { 
     metrics, 
-    tierAnalytics, 
+    tierDistribution, 
     recentActivity, 
     topCustomers,
+    upgradeOpportunities,
     engagementMetrics,
-    creditReconciliation,
-    tierChangesSummary
+    creditReconciliation
   } = useLoaderData<typeof loader>();
 
   const styles = {
@@ -913,21 +229,43 @@ export default function EnhancedDashboard() {
       display: "flex",
       alignItems: "flex-end",
       justifyContent: "space-between",
-      marginTop: "20px"
-    },
-    chartBar: {
-      backgroundColor: "#3b82f6",
-      borderRadius: "4px 4px 0 0",
-      transition: "all 0.2s",
-      flex: 1,
-      marginRight: "8px",
+      gap: "8px",
+      marginTop: "20px",
+      paddingTop: "30px",
       position: "relative" as const
     },
+    chartBarWrapper: {
+      flex: 1,
+      display: "flex",
+      flexDirection: "column" as const,
+      alignItems: "center",
+      position: "relative" as const,
+      height: "100%"
+    },
+    chartBar: {
+      width: "100%",
+      backgroundColor: "#3b82f6",
+      borderRadius: "4px 4px 0 0",
+      transition: "all 0.3s ease",
+      position: "relative" as const,
+      minHeight: "2px"
+    },
+    chartValue: {
+      position: "absolute" as const,
+      top: "-25px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      fontSize: "13px",
+      fontWeight: "600",
+      color: "#374151",
+      whiteSpace: "nowrap" as const
+    },
     chartLabel: {
-      fontSize: "10px",
+      fontSize: "11px",
       color: "#666",
       textAlign: "center" as const,
-      marginTop: "8px"
+      marginTop: "8px",
+      whiteSpace: "nowrap" as const
     },
     syncStatus: {
       display: "grid",
@@ -950,20 +288,48 @@ export default function EnhancedDashboard() {
       fontSize: "12px",
       color: "#666",
       marginTop: "4px"
+    },
+    chartSection: {
+      marginTop: "16px"
+    },
+    chartTypeToggle: {
+      display: "flex",
+      gap: "8px",
+      marginBottom: "16px"
+    },
+    toggleButton: {
+      padding: "6px 12px",
+      fontSize: "13px",
+      border: "1px solid #e5e7eb",
+      borderRadius: "6px",
+      backgroundColor: "white",
+      color: "#666",
+      cursor: "pointer",
+      transition: "all 0.2s"
+    },
+    toggleButtonActive: {
+      backgroundColor: "#3b82f6",
+      color: "white",
+      borderColor: "#3b82f6"
     }
   };
 
   // Helper function to format activity type
   const getActivityIcon = (type: string) => {
     const icons = {
-      new_customer: "•",
-      cashback_earned: "•",
-      tier_change: "•",
-      manual_adjustment: "•",
-      credit_sync: "•"
+      new_customer: "👤",
+      cashback_earned: "💰",
+      tier_upgrade: "⬆️",
+      tier_downgrade: "⬇️",
+      manual_adjustment: "✏️",
+      credit_sync: "🔄"
     };
     return icons[type as keyof typeof icons] || "•";
   };
+
+  // Calculate max values for chart scaling
+  const maxDailyOrders = Math.max(...engagementMetrics.daily.map(d => d.orders), 1);
+  const maxDailyRevenue = Math.max(...engagementMetrics.daily.map(d => d.revenue), 1);
 
   return (
     <div style={styles.container}>
@@ -990,12 +356,12 @@ export default function EnhancedDashboard() {
         <div style={styles.metricCard}>
           <h3 style={styles.metricValue}>${metrics.totalRevenue30Days.toFixed(0)}</h3>
           <p style={styles.metricTitle}>Revenue (30d)</p>
-          <p style={styles.metricSubtext}>{metrics.totalTransactions} orders</p>
+          <p style={styles.metricSubtext}>{metrics.totalOrders30Days} orders</p>
           <div style={{
             ...styles.metricChange,
-            ...(metrics.transactionGrowth >= 0 ? styles.positiveChange : styles.negativeChange)
+            ...(metrics.orderGrowth >= 0 ? styles.positiveChange : styles.negativeChange)
           }}>
-            {metrics.transactionGrowth >= 0 ? "↑" : "↓"} {Math.abs(metrics.transactionGrowth)}%
+            {metrics.orderGrowth >= 0 ? "↑" : "↓"} {Math.abs(metrics.orderGrowth)}%
           </div>
         </div>
 
@@ -1023,9 +389,9 @@ export default function EnhancedDashboard() {
         </div>
 
         <div style={styles.metricCard}>
-          <h3 style={styles.metricValue}>{metrics.conversionRate}%</h3>
-          <p style={styles.metricTitle}>Conversion Rate</p>
-          <p style={styles.metricSubtext}>{metrics.repeatPurchaseRate}% repeat</p>
+          <h3 style={styles.metricValue}>{metrics.repeatPurchaseRate}%</h3>
+          <p style={styles.metricTitle}>Repeat Purchase Rate</p>
+          <p style={styles.metricSubtext}>{metrics.newCustomersThisMonth} new this month</p>
         </div>
 
         <div style={styles.metricCard}>
@@ -1042,7 +408,7 @@ export default function EnhancedDashboard() {
 
       {/* Main Content Grid */}
       <div style={styles.sectionGrid}>
-        {/* Tier Analytics */}
+        {/* Tier Performance */}
         <div style={{ ...styles.card, ...styles.fullWidthSection }}>
           <div style={styles.cardHeader}>
             <h2 style={styles.cardTitle}>Tier Performance</h2>
@@ -1056,16 +422,16 @@ export default function EnhancedDashboard() {
             </Link>
           </div>
 
-          {tierAnalytics.length > 0 ? (
+          {tierDistribution.length > 0 ? (
             <>
               <div style={styles.tierBar}>
-                {tierAnalytics.map((tier, index) => (
+                {tierDistribution.map((tier) => (
                   <div
                     key={tier.tierId}
                     style={{
                       ...styles.tierSegment,
                       flex: `0 0 ${tier.percentage}%`,
-                      backgroundColor: getDefaultColor(index),
+                      backgroundColor: tier.color,
                     }}
                     title={`${tier.tierName}: ${tier.memberCount} members`}
                   />
@@ -1077,14 +443,14 @@ export default function EnhancedDashboard() {
                   <tr>
                     <th style={styles.th}>Tier</th>
                     <th style={{ ...styles.th, textAlign: "center" as const }}>Members</th>
-                    <th style={{ ...styles.th, textAlign: "right" as const }}>Avg Yearly Spend</th>
-                    <th style={{ ...styles.th, textAlign: "right" as const }}>Avg Order</th>
+                    <th style={{ ...styles.th, textAlign: "right" as const }}>Min Spend</th>
+                    <th style={{ ...styles.th, textAlign: "right" as const }}>Avg Yearly</th>
                     <th style={{ ...styles.th, textAlign: "center" as const }}>Retention</th>
                     <th style={{ ...styles.th, textAlign: "center" as const }}>Manual</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tierAnalytics.map((tier, index) => (
+                  {tierDistribution.map((tier) => (
                     <tr key={tier.tierId}>
                       <td style={styles.td}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1092,9 +458,9 @@ export default function EnhancedDashboard() {
                             width: "12px",
                             height: "12px",
                             borderRadius: "3px",
-                            backgroundColor: getDefaultColor(index)
+                            backgroundColor: tier.color
                           }} />
-                          <strong>{tier.tierName}</strong>
+                          <strong>{tier.displayName}</strong>
                           <span style={{ color: "#666", fontSize: "12px" }}>
                             ({tier.cashbackPercent}%)
                           </span>
@@ -1104,10 +470,10 @@ export default function EnhancedDashboard() {
                         {tier.memberCount} ({tier.percentage}%)
                       </td>
                       <td style={{ ...styles.td, textAlign: "right" as const }}>
-                        ${tier.avgSpending.toFixed(0)}
+                        {tier.minSpend ? `$${tier.minSpend.toFixed(0)}` : '-'}
                       </td>
                       <td style={{ ...styles.td, textAlign: "right" as const }}>
-                        ${tier.avgOrderValue.toFixed(0)}
+                        ${tier.avgSpending.toFixed(0)}
                       </td>
                       <td style={{ ...styles.td, textAlign: "center" as const }}>
                         <span style={{
@@ -1142,10 +508,10 @@ export default function EnhancedDashboard() {
                     ↓ {metrics.tierDowngradesThisMonth} downgrades
                   </span>
                 </div>
-                {metrics.manualTierAssignments > 0 && (
+                {metrics.manualAssignments > 0 && (
                   <div>
                     <span style={{ ...styles.badge, ...styles.infoBadge }}>
-                      {metrics.manualTierAssignments} manual assignments active
+                      {metrics.manualAssignments} manual assignments active
                     </span>
                   </div>
                 )}
@@ -1161,43 +527,78 @@ export default function EnhancedDashboard() {
           )}
         </div>
 
-        {/* Engagement Trends */}
+        {/* Order Trends */}
         <div style={styles.card}>
-          <h2 style={styles.cardTitle}>Order Trends (7 Days)</h2>
-          <div style={styles.chartContainer}>
-            {engagementMetrics.daily.map((value, index) => {
-              const maxValue = Math.max(...engagementMetrics.daily, 1);
-              const height = (value / maxValue) * 100;
-              return (
-                <div key={index} style={{ flex: 1, textAlign: "center" as const }}>
-                  <div
-                    style={{
-                      ...styles.chartBar,
-                      height: `${height}%`,
-                      opacity: value === 0 ? 0.3 : 1
-                    }}
-                    title={`${value} orders`}
-                  >
-                    {value > 0 && (
-                      <span style={{
-                        position: "absolute",
-                        top: "-20px",
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        fontSize: "12px",
-                        fontWeight: "500",
-                        color: "#666"
-                      }}>
-                        {value}
-                      </span>
-                    )}
-                  </div>
-                  <div style={styles.chartLabel}>
-                    {engagementMetrics.labels[index]}
-                  </div>
-                </div>
-              );
-            })}
+          <div style={styles.cardHeader}>
+            <h2 style={styles.cardTitle}>Order Trends (7 Days)</h2>
+          </div>
+          
+          <div style={styles.chartSection}>
+            {/* Orders Chart */}
+            <div style={{ marginBottom: "32px" }}>
+              <h3 style={{ fontSize: "14px", fontWeight: "500", color: "#666", marginBottom: "12px" }}>
+                Daily Orders
+              </h3>
+              <div style={styles.chartContainer}>
+                {engagementMetrics.daily.map((day, index) => {
+                  const height = maxDailyOrders > 0 ? (day.orders / maxDailyOrders) * 100 : 0;
+                  return (
+                    <div key={index} style={styles.chartBarWrapper}>
+                      <div
+                        style={{
+                          ...styles.chartBar,
+                          height: `${height}%`,
+                          opacity: day.orders === 0 ? 0.3 : 1,
+                          backgroundColor: day.orders === 0 ? "#e5e7eb" : "#3b82f6"
+                        }}
+                        title={`${day.orders} orders`}
+                      >
+                        <span style={styles.chartValue}>
+                          {day.orders}
+                        </span>
+                      </div>
+                      <div style={styles.chartLabel}>
+                        {day.date}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Revenue Chart */}
+            <div>
+              <h3 style={{ fontSize: "14px", fontWeight: "500", color: "#666", marginBottom: "12px" }}>
+                Daily Revenue
+              </h3>
+              <div style={styles.chartContainer}>
+                {engagementMetrics.daily.map((day, index) => {
+                  const height = maxDailyRevenue > 0 ? (day.revenue / maxDailyRevenue) * 100 : 0;
+                  return (
+                    <div key={index} style={styles.chartBarWrapper}>
+                      <div
+                        style={{
+                          ...styles.chartBar,
+                          height: `${height}%`,
+                          opacity: day.revenue === 0 ? 0.3 : 1,
+                          backgroundColor: day.revenue === 0 ? "#e5e7eb" : "#10b981"
+                        }}
+                        title={`$${day.revenue.toFixed(2)}`}
+                      >
+                        <span style={styles.chartValue}>
+                          ${day.revenue >= 1000 
+                            ? `${(day.revenue / 1000).toFixed(1)}k` 
+                            : day.revenue.toFixed(0)}
+                        </span>
+                      </div>
+                      <div style={styles.chartLabel}>
+                        {day.date}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1305,11 +706,9 @@ export default function EnhancedDashboard() {
                     <td style={styles.td}>
                       <div>
                         <div style={{ fontWeight: "500" }}>{customer.email}</div>
-                        {customer.currentTier && (
-                          <span style={{ fontSize: "12px", color: "#666" }}>
-                            {customer.currentTier.name}
-                          </span>
-                        )}
+                        <span style={{ fontSize: "12px", color: "#666" }}>
+                          {customer.currentTier}
+                        </span>
                       </div>
                     </td>
                     <td style={{ ...styles.td, textAlign: "right" as const }}>
@@ -1342,13 +741,86 @@ export default function EnhancedDashboard() {
             </div>
           )}
         </div>
+
+        {/* Upgrade Opportunities */}
+        {upgradeOpportunities.length > 0 && (
+          <div style={{ ...styles.card, ...styles.fullWidthSection }}>
+            <div style={styles.cardHeader}>
+              <h2 style={styles.cardTitle}>Upgrade Opportunities</h2>
+              <span style={{ fontSize: "14px", color: "#666" }}>
+                Customers close to tier upgrades
+              </span>
+            </div>
+            
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Customer</th>
+                  <th style={styles.th}>Current Tier</th>
+                  <th style={styles.th}>Next Tier</th>
+                  <th style={{ ...styles.th, textAlign: "right" as const }}>Current Spend</th>
+                  <th style={{ ...styles.th, textAlign: "right" as const }}>Remaining</th>
+                  <th style={{ ...styles.th, textAlign: "center" as const }}>Progress</th>
+                  <th style={{ ...styles.th, textAlign: "center" as const }}>Est. Days</th>
+                </tr>
+              </thead>
+              <tbody>
+                {upgradeOpportunities.slice(0, 5).map((opp) => (
+                  <tr key={opp.customerId}>
+                    <td style={styles.td}>
+                      <div style={{ fontWeight: "500" }}>{opp.customerEmail}</div>
+                    </td>
+                    <td style={styles.td}>{opp.currentTier}</td>
+                    <td style={styles.td}>
+                      <strong>{opp.nextTier}</strong>
+                    </td>
+                    <td style={{ ...styles.td, textAlign: "right" as const }}>
+                      ${opp.currentSpending.toFixed(0)}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: "right" as const }}>
+                      ${opp.remainingAmount.toFixed(0)}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: "center" as const }}>
+                      <div style={{ 
+                        width: "100px", 
+                        height: "6px", 
+                        backgroundColor: "#e5e7eb", 
+                        borderRadius: "3px",
+                        margin: "0 auto",
+                        position: "relative" as const,
+                        overflow: "hidden"
+                      }}>
+                        <div style={{
+                          position: "absolute" as const,
+                          left: 0,
+                          top: 0,
+                          height: "100%",
+                          width: `${opp.percentageToNext}%`,
+                          backgroundColor: "#3b82f6",
+                          borderRadius: "3px",
+                          transition: "width 0.3s ease"
+                        }} />
+                      </div>
+                      <span style={{ fontSize: "11px", color: "#666" }}>
+                        {opp.percentageToNext}%
+                      </span>
+                    </td>
+                    <td style={{ ...styles.td, textAlign: "center" as const }}>
+                      {opp.estimatedDaysToUpgrade ? (
+                        <span style={{ ...styles.badge, ...styles.infoBadge }}>
+                          ~{opp.estimatedDaysToUpgrade}d
+                        </span>
+                      ) : (
+                        <span style={{ color: "#999" }}>-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
-}
-
-// Default colors for tiers
-function getDefaultColor(index: number): string {
-  const colors = ["#8B5CF6", "#3B82F6", "#10B981", "#F59E0B", "#EF4444"];
-  return colors[index % colors.length];
 }
