@@ -1,80 +1,17 @@
 // app/services/email.server.ts
-// Comment out the db import if it doesn't exist yet
-// import { db } from "../db.server";
-
-// Define types locally if Prisma types aren't available yet
-type EmailTemplateType = 
-  | "WELCOME" 
-  | "CREDIT_EARNED" 
-  | "BALANCE_UPDATE" 
-  | "TIER_UPGRADE"
-  | "TIER_DOWNGRADE"
-  | "TIER_PROGRESS"
-  | "CREDIT_EXPIRY_WARNING";
-
-type EmailStatus = 
-  | "PENDING"
-  | "QUEUED"
-  | "SENT"
-  | "DELIVERED"
-  | "OPENED"
-  | "CLICKED"
-  | "BOUNCED"
-  | "FAILED"
-  | "UNSUBSCRIBED";
-
-type EmailFrequency = 
-  | "DAILY"
-  | "WEEKLY"
-  | "BIWEEKLY"
-  | "MONTHLY"
-  | "QUARTERLY"
-  | "NEVER";
-
-interface Customer {
-  id: string;
-  email: string;
-  storeCredit: number;
-  totalEarned: number;
-  shopDomain: string;
-  emailPreferences?: CustomerEmailPreferences | null;
-  membershipHistory?: Array<{
-    id: string;
-    isActive: boolean;
-    tierId: string;
-    tier: {
-      id: string;
-      name: string;
-      cashbackPercent: number;
-    };
-  }>;
-}
-
-interface CustomerEmailPreferences {
-  creditEarnedOptIn: boolean;
-  balanceUpdateOptIn: boolean;
-  tierProgressOptIn: boolean;
-  marketingOptIn: boolean;
-}
-
-interface EmailTemplate {
-  id: string;
-  shopDomain: string;
-  type: EmailTemplateType;
-  subject: string;
-  preheader: string;
-  heading: string;
-  body: string;
-  footer: string;
-  primaryColor: string;
-  buttonText: string | null;
-  buttonUrl: string | null;
-  includeStoreLogo: boolean;
-  includeUnsubscribe: boolean;
-  enabled: boolean;
-  tierId: string | null;
-  customerSegment: string | null;
-}
+import db from "../db.server";
+import type { 
+  Customer,
+  EmailTemplate,
+  EmailTemplateType,
+  EmailStatus,
+  EmailFrequency,
+  CustomerEmailPreferences,
+  Tier,
+  CustomerMembership,
+  Onboarding,
+  Prisma
+} from "@prisma/client";
 
 interface SendEmailParams {
   customerId: string;
@@ -90,34 +27,16 @@ interface EmailContent {
   text?: string;
 }
 
-interface ShopInfo {
-  shopDomain: string;
-  businessName: string;
-  currency: string;
-}
-
-// Mock database service for TypeScript checking
-// Replace with actual db import when available
-const mockDb = {
-  customer: {
-    findUnique: async (args: any): Promise<Customer | null> => null,
-  },
-  emailLog: {
-    create: async (args: any): Promise<any> => null,
-    update: async (args: any): Promise<any> => null,
-    count: async (args: any): Promise<number> => 0,
-    groupBy: async (args: any): Promise<any[]> => [],
-  },
-  emailTemplate: {
-    findFirst: async (args: any): Promise<EmailTemplate | null> => null,
-  },
-  onboarding: {
-    findFirst: async (args: any): Promise<ShopInfo | null> => null,
-  },
-};
-
-// Use mockDb for now, replace with actual db when available
-const db = mockDb;
+// Extended types for includes
+type CustomerWithRelations = Prisma.CustomerGetPayload<{
+  include: {
+    emailPreferences: true;
+    membershipHistory: {
+      where: { isActive: true };
+      include: { tier: true };
+    };
+  };
+}>;
 
 export class EmailService {
   /**
@@ -127,7 +46,7 @@ export class EmailService {
     const { customerId, templateType, customData, shopDomain } = params;
     
     try {
-      // Get customer details
+      // Get customer details with relations
       const customer = await db.customer.findUnique({
         where: { id: customerId },
         include: {
@@ -156,7 +75,7 @@ export class EmailService {
       }
       
       // Prepare email content
-      const emailContent = await this.prepareEmailContent(template, customer, customData);
+      const emailContent = await this.prepareEmailContent(template, customer, customData, shopDomain);
       
       // Create email log entry
       const emailLog = await db.emailLog.create({
@@ -167,28 +86,34 @@ export class EmailService {
           templateType,
           recipientEmail: customer.email,
           subject: emailContent.subject,
-          status: "PENDING" as EmailStatus,
+          status: "PENDING",
           renderedBody: emailContent.html,
           metadata: {
             storeCredit: customer.storeCredit,
-            tierName: customer.membershipHistory?.[0]?.tier.name || "Member",
+            tierName: customer.membershipHistory[0]?.tier.name || "Member",
             ...customData
           }
         }
       });
       
       // Send email (implement your email provider here)
-      const sent = await this.sendViaEmailProvider(emailContent);
+      const sent = await this.sendViaEmailProvider(emailContent, shopDomain);
       
       // Update email log
-      if (emailLog?.id) {
-        await db.emailLog.update({
-          where: { id: emailLog.id },
-          data: {
-            status: sent ? "SENT" : "FAILED",
-            sentAt: sent ? new Date() : null,
-            errorMessage: sent ? null : "Failed to send via email provider"
-          }
+      await db.emailLog.update({
+        where: { id: emailLog.id },
+        data: {
+          status: sent ? "SENT" : "FAILED",
+          sentAt: sent ? new Date() : null,
+          errorMessage: sent ? null : "Failed to send via email provider"
+        }
+      });
+      
+      // Update template test count if in test mode
+      if (customData?._isTest) {
+        await db.emailTemplate.update({
+          where: { id: template.id },
+          data: { testEmailsSent: { increment: 1 } }
         });
       }
       
@@ -207,7 +132,7 @@ export class EmailService {
    * Check if we should send this type of email to the customer
    */
   private static shouldSendEmail(
-    customer: Customer, 
+    customer: CustomerWithRelations, 
     templateType: EmailTemplateType
   ): boolean {
     const prefs = customer.emailPreferences;
@@ -221,9 +146,12 @@ export class EmailService {
         return prefs.balanceUpdateOptIn;
       case "TIER_UPGRADE":
       case "TIER_DOWNGRADE":
+      case "TIER_PROGRESS":
         return prefs.tierProgressOptIn;
       case "WELCOME":
         return true; // Always send welcome emails
+      case "CREDIT_EXPIRY_WARNING":
+        return prefs.balanceUpdateOptIn; // Use balance update preference
       default:
         return prefs.marketingOptIn;
     }
@@ -235,10 +163,10 @@ export class EmailService {
   private static async getTemplate(
     shopDomain: string,
     templateType: EmailTemplateType,
-    customer: Customer
+    customer: CustomerWithRelations
   ): Promise<EmailTemplate | null> {
     // Try to find a specific template for the customer's tier
-    const tierId = customer.membershipHistory?.[0]?.tierId;
+    const tierId = customer.membershipHistory[0]?.tierId;
     
     if (tierId) {
       const tierSpecificTemplate = await db.emailTemplate.findFirst({
@@ -252,6 +180,10 @@ export class EmailService {
       
       if (tierSpecificTemplate) return tierSpecificTemplate;
     }
+    
+    // Check for customer segment specific templates
+    // You can add logic here to determine customer segments
+    // For example: "vip" for high spenders, "inactive" for dormant customers
     
     // Fall back to general template
     return db.emailTemplate.findFirst({
@@ -270,22 +202,29 @@ export class EmailService {
    */
   private static async prepareEmailContent(
     template: EmailTemplate,
-    customer: Customer,
-    customData?: Record<string, any>
+    customer: CustomerWithRelations,
+    customData?: Record<string, any>,
+    shopDomain?: string
   ): Promise<EmailContent> {
     // Get shop info for replacements
     const shop = await db.onboarding.findFirst({
       where: { shopDomain: template.shopDomain }
     });
     
+    // Build store URL - this would be the actual Shopify domain
+    const storeUrl = `https://${shopDomain || template.shopDomain}`;
+    
     const replacements: Record<string, string> = {
-      "{{customer_name}}": customer.email.split("@")[0], // Use email prefix if no name
+      "{{customer_name}}": this.getCustomerName(customer.email),
       "{{email}}": customer.email,
-      "{{store_name}}": shop?.businessName || template.shopDomain,
-      "{{current_balance}}": `$${customer.storeCredit.toFixed(2)}`,
-      "{{total_earned}}": `$${customer.totalEarned.toFixed(2)}`,
-      "{{tier_name}}": customer.membershipHistory?.[0]?.tier.name || "Member",
+      "{{store_name}}": shop?.businessName || template.shopDomain.replace('.myshopify.com', ''),
+      "{{store_url}}": storeUrl,
+      "{{current_balance}}": this.formatCurrency(customer.storeCredit, shop?.currency),
+      "{{total_earned}}": this.formatCurrency(customer.totalEarned, shop?.currency),
+      "{{tier_name}}": customer.membershipHistory[0]?.tier.name || "Member",
+      "{{tier_cashback}}": `${customer.membershipHistory[0]?.tier.cashbackPercent || 0}%`,
       "{{currency}}": shop?.currency || "USD",
+      "{{currency_symbol}}": this.getCurrencySymbol(shop?.currency || "USD"),
       ...customData
     };
     
@@ -293,7 +232,7 @@ export class EmailService {
     const replaceVariables = (text: string): string => {
       let result = text;
       for (const [key, value] of Object.entries(replacements)) {
-        result = result.replace(new RegExp(key, "g"), String(value));
+        result = result.replace(new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "g"), String(value));
       }
       return result;
     };
@@ -301,6 +240,9 @@ export class EmailService {
     const subject = replaceVariables(template.subject);
     const body = replaceVariables(template.body);
     const footer = replaceVariables(template.footer);
+    const heading = replaceVariables(template.heading);
+    const buttonText = template.buttonText ? replaceVariables(template.buttonText) : null;
+    const buttonUrl = template.buttonUrl ? replaceVariables(template.buttonUrl) : null;
     
     // Build HTML email
     const html = `
@@ -311,32 +253,95 @@ export class EmailService {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${subject}</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { text-align: center; padding: 20px 0; }
-          .content { background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-          .button { display: inline-block; padding: 12px 24px; background: ${template.primaryColor}; color: white; text-decoration: none; border-radius: 4px; margin: 20px 0; }
-          .footer { text-align: center; padding: 20px 0; color: #666; font-size: 14px; }
-          h1 { color: #1a1a1a; margin-bottom: 20px; }
-          p { margin-bottom: 15px; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            line-height: 1.6; 
+            color: #333; 
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+          }
+          .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            padding: 20px;
+          }
+          .header { 
+            text-align: center; 
+            padding: 20px 0;
+          }
+          .logo {
+            max-width: 200px;
+            height: auto;
+          }
+          .content { 
+            background: #ffffff; 
+            padding: 30px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: ${template.primaryColor}; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 4px; 
+            margin: 20px 0;
+            font-weight: 500;
+          }
+          .button:hover {
+            opacity: 0.9;
+          }
+          .footer { 
+            text-align: center; 
+            padding: 20px 0; 
+            color: #666; 
+            font-size: 14px;
+          }
+          .footer a {
+            color: #666;
+            text-decoration: underline;
+          }
+          h1 { 
+            color: #1a1a1a; 
+            margin-bottom: 20px;
+            font-size: 28px;
+          }
+          p { 
+            margin-bottom: 15px;
+            line-height: 1.6;
+          }
+          .preheader {
+            display: none !important;
+            visibility: hidden;
+            mso-hide: all;
+            font-size: 1px;
+            line-height: 1px;
+            max-height: 0;
+            max-width: 0;
+            opacity: 0;
+            overflow: hidden;
+          }
         </style>
       </head>
       <body>
+        <div class="preheader">${template.preheader}</div>
         <div class="container">
           ${template.includeStoreLogo ? `
             <div class="header">
-              <h2>${shop?.businessName || template.shopDomain}</h2>
+              <img src="${storeUrl}/logo.png" alt="${shop?.businessName || 'Store'} Logo" class="logo" />
             </div>
           ` : ''}
           
           <div class="content">
-            <h1>${replaceVariables(template.heading)}</h1>
+            <h1>${heading}</h1>
             ${body}
             
-            ${template.buttonText && template.buttonUrl ? `
-              <div style="text-align: center;">
-                <a href="${replaceVariables(template.buttonUrl)}" class="button">
-                  ${replaceVariables(template.buttonText)}
+            ${buttonText && buttonUrl ? `
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${buttonUrl}" class="button" style="color: white;">
+                  ${buttonText}
                 </a>
               </div>
             ` : ''}
@@ -345,9 +350,15 @@ export class EmailService {
           <div class="footer">
             ${footer}
             ${template.includeUnsubscribe ? `
-              <p>
-                <a href="#" style="color: #666;">Unsubscribe</a> | 
-                <a href="#" style="color: #666;">Update Preferences</a>
+              <p style="margin-top: 20px;">
+                <a href="${storeUrl}/pages/email-preferences?customer=${customer.id}&token=${this.generateUnsubscribeToken(customer.id)}">Unsubscribe</a> | 
+                <a href="${storeUrl}/pages/email-preferences?customer=${customer.id}">Update Preferences</a>
+              </p>
+            ` : ''}
+            ${shop ? `
+              <p style="margin-top: 10px; font-size: 12px; color: #999;">
+                ${shop.businessName}<br>
+                ${shop.country}
               </p>
             ` : ''}
           </div>
@@ -356,20 +367,90 @@ export class EmailService {
       </html>
     `;
     
+    // Generate plain text version
+    const text = `${heading}\n\n${body.replace(/<[^>]*>/g, '')}\n\n${footer}${
+      template.includeUnsubscribe ? '\n\nTo unsubscribe or update preferences, visit your account settings.' : ''
+    }`;
+    
     return {
       to: customer.email,
       subject,
       html,
-      text: `${replaceVariables(template.heading)}\n\n${body.replace(/<[^>]*>/g, '')}\n\n${footer}`
+      text
     };
   }
   
   /**
-   * Send email via your email provider
-   * Implement this based on your email service (SendGrid, AWS SES, etc.)
+   * Get customer name from email or other sources
    */
-  private static async sendViaEmailProvider(content: EmailContent): Promise<boolean> {
+  private static getCustomerName(email: string): string {
+    // Extract name from email if no proper name is stored
+    const emailPrefix = email.split("@")[0];
+    // Convert email prefix to proper case (john.doe -> John Doe)
+    return emailPrefix
+      .split(/[._-]/)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+  }
+  
+  /**
+   * Format currency with proper symbol and formatting
+   */
+  static formatCurrency(amount: number, currency?: string): string {
+    const curr = currency || "USD";
+    const symbol = this.getCurrencySymbol(curr);
+    
+    // Format based on currency
+    switch (curr) {
+      case "EUR":
+        return `${amount.toFixed(2)}${symbol}`;
+      case "GBP":
+      case "USD":
+      case "CAD":
+      case "AUD":
+      default:
+        return `${symbol}${amount.toFixed(2)}`;
+    }
+  }
+  
+  /**
+   * Get currency symbol
+   */
+  private static getCurrencySymbol(currency: string): string {
+    const symbols: Record<string, string> = {
+      USD: "$",
+      EUR: "€",
+      GBP: "£",
+      CAD: "$",
+      AUD: "$",
+      JPY: "¥",
+      CNY: "¥",
+      INR: "₹",
+      // Add more as needed
+    };
+    
+    return symbols[currency] || currency;
+  }
+  
+  /**
+   * Generate unsubscribe token (implement your own logic)
+   */
+  private static generateUnsubscribeToken(customerId: string): string {
+    // In production, use a proper token generation method
+    // This could be a JWT or a hashed value stored in the database
+    return Buffer.from(`${customerId}:${Date.now()}`).toString('base64');
+  }
+  
+  /**
+   * Send email via your email provider
+   */
+  private static async sendViaEmailProvider(content: EmailContent, shopDomain: string): Promise<boolean> {
+    // Get sender email - could be from environment or shop settings
+    const senderEmail = process.env.SENDER_EMAIL || `noreply@${shopDomain}`;
+    const senderName = shopDomain.replace('.myshopify.com', '');
+    
     // TODO: Implement your email provider integration here
+    
     // Example for SendGrid:
     /*
     const sgMail = require('@sendgrid/mail');
@@ -378,10 +459,17 @@ export class EmailService {
     try {
       await sgMail.send({
         to: content.to,
-        from: process.env.SENDER_EMAIL,
+        from: {
+          email: senderEmail,
+          name: senderName
+        },
         subject: content.subject,
         html: content.html,
         text: content.text,
+        trackingSettings: {
+          clickTracking: { enable: true },
+          openTracking: { enable: true }
+        }
       });
       return true;
     } catch (error) {
@@ -390,13 +478,42 @@ export class EmailService {
     }
     */
     
-    // For now, just log and return true for testing
-    console.log("Sending email:", {
-      to: content.to,
-      subject: content.subject
-    });
+    // Example for AWS SES:
+    /*
+    const AWS = require('aws-sdk');
+    const ses = new AWS.SES({ region: process.env.AWS_REGION });
     
-    return true; // Change to false to test failure scenarios
+    try {
+      await ses.sendEmail({
+        Source: `${senderName} <${senderEmail}>`,
+        Destination: { ToAddresses: [content.to] },
+        Message: {
+          Subject: { Data: content.subject },
+          Body: {
+            Html: { Data: content.html },
+            Text: { Data: content.text }
+          }
+        }
+      }).promise();
+      return true;
+    } catch (error) {
+      console.error("AWS SES error:", error);
+      return false;
+    }
+    */
+    
+    // For development/testing
+    if (process.env.NODE_ENV === 'development') {
+      console.log("📧 Email would be sent:");
+      console.log("To:", content.to);
+      console.log("Subject:", content.subject);
+      console.log("From:", `${senderName} <${senderEmail}>`);
+      return true;
+    }
+    
+    // Default: log error if no provider configured
+    console.error("No email provider configured. Set up SendGrid, AWS SES, or another provider.");
+    return false;
   }
   
   /**
@@ -405,10 +522,12 @@ export class EmailService {
   static async sendBatchEmails(
     shopDomain: string,
     templateType: EmailTemplateType,
-    customerIds: string[]
-  ): Promise<{ sent: number; failed: number }> {
+    customerIds: string[],
+    customDataPerCustomer?: Record<string, Record<string, any>>
+  ): Promise<{ sent: number; failed: number; errors: string[] }> {
     let sent = 0;
     let failed = 0;
+    const errors: string[] = [];
     
     // Process in batches to avoid overwhelming the system
     const batchSize = 10;
@@ -420,13 +539,17 @@ export class EmailService {
           const result = await this.sendEmail({
             customerId,
             templateType,
-            shopDomain
+            shopDomain,
+            customData: customDataPerCustomer?.[customerId]
           });
           
           if (result.success) {
             sent++;
           } else {
             failed++;
+            if (result.error) {
+              errors.push(`${customerId}: ${result.error}`);
+            }
           }
         })
       );
@@ -437,7 +560,7 @@ export class EmailService {
       }
     }
     
-    return { sent, failed };
+    return { sent, failed, errors };
   }
   
   /**
@@ -451,8 +574,10 @@ export class EmailService {
     totalSent: number;
     byType: Array<{ type: EmailTemplateType; count: number }>;
     byStatus: Array<{ status: EmailStatus; count: number }>;
+    openRate: number;
+    clickRate: number;
   }> {
-    const where: any = { shopDomain };
+    const where: Prisma.EmailLogWhereInput = { shopDomain };
     
     if (dateFrom || dateTo) {
       where.createdAt = {};
@@ -460,8 +585,10 @@ export class EmailService {
       if (dateTo) where.createdAt.lte = dateTo;
     }
     
-    const [totalSent, byType, byStatus] = await Promise.all([
-      db.emailLog.count({ where }),
+    const [totalSent, totalOpened, totalClicked, byType, byStatus] = await Promise.all([
+      db.emailLog.count({ where: { ...where, status: "SENT" } }),
+      db.emailLog.count({ where: { ...where, openedAt: { not: null } } }),
+      db.emailLog.count({ where: { ...where, clickedAt: { not: null } } }),
       db.emailLog.groupBy({
         by: ['templateType'],
         where,
@@ -476,15 +603,120 @@ export class EmailService {
     
     return {
       totalSent,
-      byType: byType.map((t: any) => ({ 
-        type: t.templateType as EmailTemplateType, 
+      byType: byType.map((t) => ({ 
+        type: t.templateType, 
         count: t._count 
       })),
-      byStatus: byStatus.map((s: any) => ({ 
-        status: s.status as EmailStatus, 
+      byStatus: byStatus.map((s) => ({ 
+        status: s.status, 
         count: s._count 
-      }))
+      })),
+      openRate: totalSent > 0 ? (totalOpened / totalSent) * 100 : 0,
+      clickRate: totalSent > 0 ? (totalClicked / totalSent) * 100 : 0
     };
+  }
+  
+  /**
+   * Send test email
+   */
+  static async sendTestEmail(
+    templateId: string,
+    recipientEmail: string,
+    shopDomain: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const template = await db.emailTemplate.findUnique({
+        where: { id: templateId }
+      });
+      
+      if (!template) {
+        return { success: false, error: "Template not found" };
+      }
+      
+      // Create a mock customer for testing
+      const mockCustomer: CustomerWithRelations = {
+        id: "test-customer",
+        shopDomain,
+        shopifyCustomerId: "test-123",
+        email: recipientEmail,
+        storeCredit: 150.00,
+        totalEarned: 500.00,
+        notes: null,
+        tags: [],
+        preferences: null,
+        lastSyncedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        emailPreferences: {
+          id: "test-prefs",
+          customerId: "test-customer",
+          shopDomain,
+          creditEarnedOptIn: true,
+          balanceUpdateOptIn: true,
+          tierProgressOptIn: true,
+          marketingOptIn: true,
+          balanceUpdateFrequency: "MONTHLY",
+          tierProgressFrequency: "MONTHLY",
+          preferredLanguage: "en",
+          timezone: "UTC",
+          lastUpdated: new Date(),
+          updatedBy: null,
+          unsubscribedAt: null,
+          unsubscribeReason: null
+        },
+        membershipHistory: [{
+          id: "test-membership",
+          customerId: "test-customer",
+          tierId: "test-tier",
+          startDate: new Date(),
+          endDate: null,
+          isActive: true,
+          assignmentType: "AUTOMATIC",
+          assignedBy: null,
+          reason: null,
+          previousTierId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          tier: {
+            id: "test-tier",
+            shopDomain,
+            name: "Gold",
+            minSpend: 1000,
+            cashbackPercent: 5,
+            evaluationPeriod: "ANNUAL",
+            isActive: true,
+            benefits: { list: ["Free shipping", "Early access"] },
+            createdAt: new Date()
+          }
+        }]
+      };
+      
+      const emailContent = await this.prepareEmailContent(
+        template,
+        mockCustomer,
+        { 
+          "{{credit_amount}}": "$25.00",
+          "{{order_id}}": "TEST-1234",
+          "{{new_tier}}": "Platinum",
+          "{{previous_tier}}": "Gold",
+          _isTest: true
+        },
+        shopDomain
+      );
+      
+      const sent = await this.sendViaEmailProvider(emailContent, shopDomain);
+      
+      return sent
+        ? { success: true }
+        : { success: false, error: "Failed to send test email" };
+        
+    } catch (error) {
+      console.error("Test email error:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error"
+      };
+    }
   }
 }
 
@@ -508,7 +740,7 @@ export async function sendCreditEarnedEmail(
     shopDomain,
     templateType: "CREDIT_EARNED",
     customData: {
-      "{{credit_amount}}": `$${creditAmount.toFixed(2)}`,
+      "{{credit_amount}}": EmailService.formatCurrency(creditAmount),
       "{{order_id}}": orderId
     }
   });
@@ -519,6 +751,7 @@ export async function sendTierUpgradeEmail(
   shopDomain: string,
   newTierName: string,
   previousTierName: string,
+  newCashbackPercent: number,
   newBenefits: string[]
 ): Promise<{ success: boolean; error?: string }> {
   return EmailService.sendEmail({
@@ -528,7 +761,27 @@ export async function sendTierUpgradeEmail(
     customData: {
       "{{new_tier}}": newTierName,
       "{{previous_tier}}": previousTierName,
-      "{{benefits_list}}": newBenefits.map(b => `• ${b}`).join('\n')
+      "{{new_cashback_percent}}": `${newCashbackPercent}%`,
+      "{{benefits_list}}": newBenefits.map(b => `• ${b}`).join('<br>')
+    }
+  });
+}
+
+export async function sendTierDowngradeEmail(
+  customerId: string,
+  shopDomain: string,
+  newTierName: string,
+  previousTierName: string,
+  newCashbackPercent: number
+): Promise<{ success: boolean; error?: string }> {
+  return EmailService.sendEmail({
+    customerId,
+    shopDomain,
+    templateType: "TIER_DOWNGRADE",
+    customData: {
+      "{{new_tier}}": newTierName,
+      "{{previous_tier}}": previousTierName,
+      "{{new_cashback_percent}}": `${newCashbackPercent}%`
     }
   });
 }
@@ -541,5 +794,26 @@ export async function sendBalanceReminderEmail(
     customerId,
     shopDomain,
     templateType: "BALANCE_UPDATE"
+  });
+}
+
+export async function sendCreditExpiryWarning(
+  customerId: string,
+  shopDomain: string,
+  expiringAmount: number,
+  expiryDate: Date
+): Promise<{ success: boolean; error?: string }> {
+  return EmailService.sendEmail({
+    customerId,
+    shopDomain,
+    templateType: "CREDIT_EXPIRY_WARNING",
+    customData: {
+      "{{expiring_amount}}": EmailService.formatCurrency(expiringAmount),
+      "{{expiry_date}}": expiryDate.toLocaleDateString('en-US', { 
+        month: 'long', 
+        day: 'numeric', 
+        year: 'numeric' 
+      })
+    }
   });
 }

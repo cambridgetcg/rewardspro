@@ -21,7 +21,9 @@ import {
   DataTable,
   Modal,
   TextContainer,
-  Icon,
+  Checkbox,
+  ColorPicker,
+  type HSBAColor,
 } from "@shopify/polaris";
 import {
   ViewIcon,
@@ -31,11 +33,91 @@ import {
   EditIcon,
 } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
-// Comment out or remove if db.server doesn't exist yet
-// import { db } from "../db.server";
+import db from "../db.server";
+import type { EmailTemplate as PrismaEmailTemplate } from "@prisma/client";
 
-// Define types locally if they're not available from Prisma yet
-type EmailTemplateType = "WELCOME" | "CREDIT_EARNED" | "BALANCE_UPDATE" | "TIER_UPGRADE";
+// Helper function to convert HSB to Hex
+function hsbToHex(hsba: HSBAColor): string {
+  const { hue, saturation, brightness } = hsba;
+  
+  // Convert HSB to RGB
+  const h = hue;
+  const s = saturation;
+  const b = brightness;
+  
+  const c = b * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = b - c;
+  
+  let r = 0, g = 0, b2 = 0;
+  
+  if (h >= 0 && h < 60) {
+    r = c; g = x; b2 = 0;
+  } else if (h >= 60 && h < 120) {
+    r = x; g = c; b2 = 0;
+  } else if (h >= 120 && h < 180) {
+    r = 0; g = c; b2 = x;
+  } else if (h >= 180 && h < 240) {
+    r = 0; g = x; b2 = c;
+  } else if (h >= 240 && h < 300) {
+    r = x; g = 0; b2 = c;
+  } else if (h >= 300 && h < 360) {
+    r = c; g = 0; b2 = x;
+  }
+  
+  // Convert to 0-255 range
+  r = Math.round((r + m) * 255);
+  g = Math.round((g + m) * 255);
+  b2 = Math.round((b2 + m) * 255);
+  
+  // Convert to hex
+  const toHex = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b2)}`;
+}
+
+// Helper function to convert Hex to HSB
+function hexToHsb(hex: string): HSBAColor {
+  // Remove # if present
+  hex = hex.replace('#', '');
+  
+  // Parse hex values
+  const r = parseInt(hex.substr(0, 2), 16) / 255;
+  const g = parseInt(hex.substr(2, 2), 16) / 255;
+  const b = parseInt(hex.substr(4, 2), 16) / 255;
+  
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  
+  let hue = 0;
+  let saturation = 0;
+  const brightness = max;
+  
+  if (delta !== 0) {
+    saturation = delta / max;
+    
+    if (max === r) {
+      hue = ((g - b) / delta) % 6;
+    } else if (max === g) {
+      hue = (b - r) / delta + 2;
+    } else {
+      hue = (r - g) / delta + 4;
+    }
+    
+    hue = hue * 60;
+    if (hue < 0) hue += 360;
+  }
+  
+  return {
+    hue,
+    saturation,
+    brightness,
+    alpha: 1
+  };
+}
+
+// Use Prisma enums
+type EmailTemplateType = "WELCOME" | "CREDIT_EARNED" | "BALANCE_UPDATE" | "TIER_UPGRADE" | "TIER_DOWNGRADE" | "TIER_PROGRESS" | "CREDIT_EXPIRY_WARNING";
 type EmailTone = "PROFESSIONAL" | "FRIENDLY" | "CASUAL" | "EXCITED";
 
 interface EmailGenerationParams {
@@ -60,30 +142,21 @@ interface GeneratedEmail {
   body: string;
   footer: string;
   buttonText?: string;
+  buttonUrl?: string;
 }
 
-interface EmailTemplate {
-  id: string;
-  type: EmailTemplateType;
-  name: string;
-  subject: string;
-  preheader: string;
-  heading: string;
-  body: string;
-  footer: string;
-  tone: EmailTone;
-  buttonText: string | null;
-  enabled: boolean;
+// Type for serialized template from JSON response
+type SerializedEmailTemplate = Omit<PrismaEmailTemplate, 'createdAt' | 'updatedAt'> & {
   createdAt: string;
   updatedAt: string;
-}
+};
 
 interface LoaderData {
   hasApiKey: boolean;
   shopName: string;
   shopEmail: string;
   currencyCode: string;
-  templates: EmailTemplate[];
+  templates: SerializedEmailTemplate[];
 }
 
 interface ActionData {
@@ -104,6 +177,9 @@ const EMAIL_TYPES: Array<{ label: string; value: EmailTemplateType }> = [
   { label: "Credit Earned", value: "CREDIT_EARNED" },
   { label: "Balance Update", value: "BALANCE_UPDATE" },
   { label: "Tier Upgrade", value: "TIER_UPGRADE" },
+  { label: "Tier Downgrade", value: "TIER_DOWNGRADE" },
+  { label: "Tier Progress", value: "TIER_PROGRESS" },
+  { label: "Credit Expiry Warning", value: "CREDIT_EXPIRY_WARNING" },
 ];
 
 const EMAIL_TONES: Array<{ label: string; value: EmailTone }> = [
@@ -141,54 +217,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
   
   // Fetch existing templates
-  // TODO: Uncomment when db is available
-  /*
   const templates = await db.emailTemplate.findMany({
-    where: { shopDomain: session.shop },
+    where: { 
+      shopDomain: session.shop,
+      customerSegment: null, // Only show general templates
+      tierId: null // Not tier-specific
+    },
     orderBy: { updatedAt: 'desc' },
   });
-  */
   
-  // Mock templates for development
-  const templates: EmailTemplate[] = [
-    {
-      id: "1",
-      type: "WELCOME",
-      name: "Welcome - Friendly",
-      subject: "Welcome to {{store_name}}'s Rewards Program!",
-      preheader: "Start earning cashback on every purchase",
-      heading: "Welcome aboard, {{customer_name}}!",
-      body: "<p>We're thrilled to have you join our rewards program. From now on, every purchase you make earns you cash back!</p><p>Shop now and watch your rewards grow.</p>",
-      footer: "Thank you for being a valued customer.",
-      tone: "FRIENDLY",
-      buttonText: "Start Shopping",
-      enabled: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: "2",
-      type: "CREDIT_EARNED",
-      name: "Credit Earned - Excited",
-      subject: "🎉 You just earned ${{credit_amount}}!",
-      preheader: "Your balance is now ${{current_balance}}",
-      heading: "Cha-ching! 💰",
-      body: "<p>Great news, {{customer_name}}! You've just earned <strong>${{credit_amount}}</strong> in store credit from your recent purchase.</p><p>Your new balance is <strong>${{current_balance}}</strong>. Why not treat yourself?</p>",
-      footer: "Happy shopping!",
-      tone: "EXCITED",
-      buttonText: "Use My Credit",
-      enabled: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ];
+  // Convert dates to strings for JSON serialization
+  const serializedTemplates: SerializedEmailTemplate[] = templates.map(template => ({
+    ...template,
+    createdAt: template.createdAt.toISOString(),
+    updatedAt: template.updatedAt.toISOString(),
+  }));
   
   return json<LoaderData>({ 
     hasApiKey,
     shopName: shopData.data.shop.name,
     shopEmail: shopData.data.shop.email,
     currencyCode: shopData.data.shop.currencyCode,
-    templates,
+    templates: serializedTemplates,
   });
 };
 
@@ -216,6 +266,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         customData.currentBalance = parseFloat(formData.get("currentBalance") as string) || 50;
         break;
       case "TIER_UPGRADE":
+      case "TIER_DOWNGRADE":
         customData.tierName = formData.get("tierName") as string || "Gold";
         customData.previousTier = formData.get("previousTier") as string || "Silver";
         customData.cashbackPercent = parseFloat(formData.get("cashbackPercent") as string) || 5;
@@ -247,8 +298,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
   
   if (action === "save") {
-    // TODO: Uncomment when db is available
-    /*
     const emailType = formData.get("emailType") as EmailTemplateType;
     const tone = formData.get("tone") as EmailTone;
     const subject = formData.get("subject") as string;
@@ -257,43 +306,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const body = formData.get("body") as string;
     const footer = formData.get("footer") as string;
     const buttonText = formData.get("buttonText") as string | null;
+    const buttonUrl = formData.get("buttonUrl") as string | null;
+    const includeStoreLogo = formData.get("includeStoreLogo") === "true";
+    const includeUnsubscribe = formData.get("includeUnsubscribe") === "true";
+    const primaryColor = formData.get("primaryColor") as string || "#1a1a1a";
     
     try {
-      const template = await db.emailTemplate.upsert({
+      // Check if template already exists for this type/tone combination
+      const existingTemplate = await db.emailTemplate.findFirst({
         where: {
-          shopDomain_type_customerSegment_tierId: {
-            shopDomain: session.shop,
-            type: emailType,
-            customerSegment: null,
-            tierId: null,
-          },
-        },
-        update: {
-          subject,
-          preheader,
-          heading,
-          body,
-          footer,
-          tone,
-          buttonText: buttonText || undefined,
-          enabled: true,
-          lastModifiedBy: session.id,
-        },
-        create: {
           shopDomain: session.shop,
           type: emailType,
-          name: `${emailType.replace(/_/g, " ").toLowerCase()} - ${tone.toLowerCase()}`,
-          subject,
-          preheader,
-          heading,
-          body,
-          footer,
-          tone,
-          buttonText: buttonText || undefined,
-          enabled: true,
-          lastModifiedBy: session.id,
+          tone: tone,
+          customerSegment: null,
+          tierId: null,
         },
       });
+      
+      const template = existingTemplate
+        ? await db.emailTemplate.update({
+            where: { id: existingTemplate.id },
+            data: {
+              subject,
+              preheader,
+              heading,
+              body,
+              footer,
+              buttonText,
+              buttonUrl,
+              includeStoreLogo,
+              includeUnsubscribe,
+              primaryColor,
+              enabled: true,
+              lastModifiedBy: session.id,
+            },
+          })
+        : await db.emailTemplate.create({
+            data: {
+              shopDomain: session.shop,
+              type: emailType,
+              name: `${emailType.replace(/_/g, " ").toLowerCase()} - ${tone.toLowerCase()}`,
+              subject,
+              preheader,
+              heading,
+              body,
+              footer,
+              tone,
+              buttonText,
+              buttonUrl,
+              includeStoreLogo,
+              includeUnsubscribe,
+              primaryColor,
+              enabled: true,
+              lastModifiedBy: session.id,
+            },
+          });
       
       return json<ActionData>({
         success: true,
@@ -301,26 +368,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         templateId: template.id,
       });
     } catch (error) {
+      console.error("Save error:", error);
       return json<ActionData>({
         success: false,
         error: error instanceof Error ? error.message : "Failed to save template",
       });
     }
-    */
-    
-    // Temporary response while database is not connected
-    return json<ActionData>({
-      success: true,
-      saved: true,
-      templateId: "temp-id",
-    });
   }
   
   if (action === "delete") {
     const templateId = formData.get("templateId") as string;
     
-    // TODO: Uncomment when db is available
-    /*
     try {
       await db.emailTemplate.delete({
         where: { id: templateId },
@@ -336,20 +394,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         error: error instanceof Error ? error.message : "Failed to delete template",
       });
     }
-    */
-    
-    return json<ActionData>({
-      success: true,
-      deleted: true,
-    });
   }
   
   if (action === "toggle") {
     const templateId = formData.get("templateId") as string;
     const enabled = formData.get("enabled") === "true";
     
-    // TODO: Uncomment when db is available
-    /*
     try {
       await db.emailTemplate.update({
         where: { id: templateId },
@@ -366,12 +416,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         error: error instanceof Error ? error.message : "Failed to toggle template",
       });
     }
-    */
-    
-    return json<ActionData>({
-      success: true,
-      toggled: true,
-    });
   }
   
   if (action === "update") {
@@ -382,9 +426,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const body = formData.get("body") as string;
     const footer = formData.get("footer") as string;
     const buttonText = formData.get("buttonText") as string | null;
+    const buttonUrl = formData.get("buttonUrl") as string | null;
+    const includeStoreLogo = formData.get("includeStoreLogo") === "true";
+    const includeUnsubscribe = formData.get("includeUnsubscribe") === "true";
+    const primaryColor = formData.get("primaryColor") as string;
     
-    // TODO: Uncomment when db is available
-    /*
     try {
       await db.emailTemplate.update({
         where: { id: templateId },
@@ -394,8 +440,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           heading,
           body,
           footer,
-          buttonText: buttonText || undefined,
-          updatedAt: new Date(),
+          buttonText,
+          buttonUrl,
+          includeStoreLogo,
+          includeUnsubscribe,
+          primaryColor,
           lastModifiedBy: session.id,
         },
       });
@@ -410,12 +459,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         error: error instanceof Error ? error.message : "Failed to update template",
       });
     }
-    */
-    
-    return json<ActionData>({
-      success: true,
-      updated: true,
-    });
   }
   
   return json<ActionData>({ success: false, error: "Invalid action" });
@@ -510,6 +553,22 @@ function createPromptForEmailType(params: EmailGenerationParams): string {
       ${customData.benefits?.length ? `Additional benefits include: ${customData.benefits.join(", ")}.` : ""}
       The email should celebrate their achievement and highlight the new benefits.`;
       break;
+      
+    case "TIER_DOWNGRADE":
+      contextualPrompt = `Create a tier downgrade notification email. The customer has moved from ${customData.previousTier} to ${customData.tierName} tier.
+      They now earn ${customData.cashbackPercent}% cashback on purchases.
+      The email should be encouraging and motivate them to reach the higher tier again.`;
+      break;
+      
+    case "TIER_PROGRESS":
+      contextualPrompt = `Create a tier progress update email. The customer is currently in ${customData.tierName} tier.
+      The email should show their progress and encourage more purchases to reach the next tier.`;
+      break;
+      
+    case "CREDIT_EXPIRY_WARNING":
+      contextualPrompt = `Create a credit expiry warning email. The customer has $${customData.currentBalance} that will expire soon.
+      The email should create urgency without being pushy.`;
+      break;
   }
   
   return `${contextualPrompt}
@@ -525,7 +584,8 @@ Generate an email with the following JSON structure:
   "heading": "Main heading for the email body",
   "body": "The main email content. Use <p> tags for paragraphs. Include personalization with {{customer_name}} and {{store_name}} placeholders. Keep it concise but engaging (2-3 paragraphs max).",
   "footer": "A brief footer message",
-  "buttonText": "Call-to-action button text (if applicable)"
+  "buttonText": "Call-to-action button text (if applicable)",
+  "buttonUrl": "Button URL (use {{store_url}} placeholder, e.g., '{{store_url}}/collections/all')"
 }
 
 Make sure to:
@@ -533,7 +593,8 @@ Make sure to:
 - Use {{customer_name}} and {{store_name}} placeholders for personalization
 - Make the subject line compelling and relevant
 - Keep the content concise and scannable
-- Include a clear call-to-action`;
+- Include a clear call-to-action
+- For buttonUrl, use {{store_url}} as the base URL`;
 }
 
 export default function EmailGenerator() {
@@ -546,7 +607,7 @@ export default function EmailGenerator() {
   const [previewModalActive, setPreviewModalActive] = useState(false);
   const [deleteModalActive, setDeleteModalActive] = useState(false);
   const [editModalActive, setEditModalActive] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<SerializedEmailTemplate | null>(null);
   
   // Edit form states
   const [editSubject, setEditSubject] = useState("");
@@ -555,6 +616,10 @@ export default function EmailGenerator() {
   const [editBody, setEditBody] = useState("");
   const [editFooter, setEditFooter] = useState("");
   const [editButtonText, setEditButtonText] = useState("");
+  const [editButtonUrl, setEditButtonUrl] = useState("");
+  const [editIncludeLogo, setEditIncludeLogo] = useState(true);
+  const [editIncludeUnsubscribe, setEditIncludeUnsubscribe] = useState(true);
+  const [editPrimaryColor, setEditPrimaryColor] = useState("#1a1a1a");
   
   // Generated email form states
   const [genSubject, setGenSubject] = useState("");
@@ -563,6 +628,10 @@ export default function EmailGenerator() {
   const [genBody, setGenBody] = useState("");
   const [genFooter, setGenFooter] = useState("");
   const [genButtonText, setGenButtonText] = useState("");
+  const [genButtonUrl, setGenButtonUrl] = useState("");
+  const [genIncludeLogo, setGenIncludeLogo] = useState(true);
+  const [genIncludeUnsubscribe, setGenIncludeUnsubscribe] = useState(true);
+  const [genPrimaryColor, setGenPrimaryColor] = useState("#1a1a1a");
   
   const [emailType, setEmailType] = useState<EmailTemplateType>("WELCOME");
   const [tone, setTone] = useState<EmailTone>("FRIENDLY");
@@ -583,6 +652,7 @@ export default function EmailGenerator() {
       setGenBody(actionData.generatedEmail.body);
       setGenFooter(actionData.generatedEmail.footer);
       setGenButtonText(actionData.generatedEmail.buttonText || "");
+      setGenButtonUrl(actionData.generatedEmail.buttonUrl || "");
     }
   }, [actionData]);
   
@@ -606,8 +676,9 @@ export default function EmailGenerator() {
     },
   ];
   
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    return dateObj.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -617,10 +688,10 @@ export default function EmailGenerator() {
   };
   
   const getEmailTypeLabel = (type: EmailTemplateType) => {
-    return EMAIL_TYPES.find(t => t.value === type)?.label || type;
+    return EMAIL_TYPES.find(t => t.value === type)?.label || type.replace(/_/g, ' ');
   };
   
-  const handleToggleTemplate = (template: EmailTemplate) => {
+  const handleToggleTemplate = (template: SerializedEmailTemplate) => {
     const formData = new FormData();
     formData.append("action", "toggle");
     formData.append("templateId", template.id);
@@ -628,7 +699,7 @@ export default function EmailGenerator() {
     submit(formData, { method: "post" });
   };
   
-  const handleDeleteTemplate = (template: EmailTemplate) => {
+  const handleDeleteTemplate = (template: SerializedEmailTemplate) => {
     setSelectedTemplate(template);
     setDeleteModalActive(true);
   };
@@ -644,12 +715,12 @@ export default function EmailGenerator() {
     setSelectedTemplate(null);
   };
   
-  const handlePreviewTemplate = (template: EmailTemplate) => {
+  const handlePreviewTemplate = (template: SerializedEmailTemplate) => {
     setSelectedTemplate(template);
     setPreviewModalActive(true);
   };
   
-  const handleEditTemplate = (template: EmailTemplate) => {
+  const handleEditTemplate = (template: SerializedEmailTemplate) => {
     setSelectedTemplate(template);
     setEditSubject(template.subject);
     setEditPreheader(template.preheader);
@@ -657,6 +728,10 @@ export default function EmailGenerator() {
     setEditBody(template.body);
     setEditFooter(template.footer);
     setEditButtonText(template.buttonText || "");
+    setEditButtonUrl(template.buttonUrl || "");
+    setEditIncludeLogo(template.includeStoreLogo);
+    setEditIncludeUnsubscribe(template.includeUnsubscribe);
+    setEditPrimaryColor(template.primaryColor);
     setEditModalActive(true);
   };
   
@@ -671,6 +746,10 @@ export default function EmailGenerator() {
       formData.append("body", editBody);
       formData.append("footer", editFooter);
       formData.append("buttonText", editButtonText);
+      formData.append("buttonUrl", editButtonUrl);
+      formData.append("includeStoreLogo", editIncludeLogo.toString());
+      formData.append("includeUnsubscribe", editIncludeUnsubscribe.toString());
+      formData.append("primaryColor", editPrimaryColor);
       submit(formData, { method: "post" });
       setEditModalActive(false);
       setSelectedTemplate(null);
@@ -779,13 +858,7 @@ export default function EmailGenerator() {
                       ))}
                     </BlockStack>
                     
-                    <Banner>
-                  <p>
-                    <strong>Available variables:</strong> {"{{customer_name}}, {{store_name}}, {{current_balance}}, {{credit_amount}}, {{tier_name}}, {{previous_tier}}, {{order_id}}, {{currency}}"}
-                  </p>
-                </Banner>
-                
-                <TextField
+                    <TextField
                       label="Customer Name (for preview)"
                       value={customerName}
                       onChange={setCustomerName}
@@ -814,7 +887,7 @@ export default function EmailGenerator() {
                       </>
                     )}
                     
-                    {emailType === "BALANCE_UPDATE" && (
+                    {(emailType === "BALANCE_UPDATE" || emailType === "CREDIT_EXPIRY_WARNING") && (
                       <TextField
                         label={`Current Balance (${currencyCode})`}
                         value={currentBalance}
@@ -825,22 +898,24 @@ export default function EmailGenerator() {
                       />
                     )}
                     
-                    {emailType === "TIER_UPGRADE" && (
+                    {(emailType === "TIER_UPGRADE" || emailType === "TIER_DOWNGRADE" || emailType === "TIER_PROGRESS") && (
                       <>
                         <TextField
-                          label="New Tier Name"
+                          label={emailType === "TIER_PROGRESS" ? "Current Tier" : "New Tier Name"}
                           value={tierName}
                           onChange={setTierName}
                           name="tierName"
                           autoComplete="off"
                         />
-                        <TextField
-                          label="Previous Tier"
-                          value={previousTier}
-                          onChange={setPreviousTier}
-                          name="previousTier"
-                          autoComplete="off"
-                        />
+                        {emailType !== "TIER_PROGRESS" && (
+                          <TextField
+                            label="Previous Tier"
+                            value={previousTier}
+                            onChange={setPreviousTier}
+                            name="previousTier"
+                            autoComplete="off"
+                          />
+                        )}
                         <TextField
                           label="Cashback Percent"
                           value={cashbackPercent}
@@ -850,14 +925,16 @@ export default function EmailGenerator() {
                           suffix="%"
                           autoComplete="off"
                         />
-                        <TextField
-                          label="Additional Benefits (comma-separated)"
-                          value={benefits}
-                          onChange={setBenefits}
-                          name="benefits"
-                          multiline={2}
-                          autoComplete="off"
-                        />
+                        {emailType === "TIER_UPGRADE" && (
+                          <TextField
+                            label="Additional Benefits (comma-separated)"
+                            value={benefits}
+                            onChange={setBenefits}
+                            name="benefits"
+                            multiline={2}
+                            autoComplete="off"
+                          />
+                        )}
                       </>
                     )}
                     
@@ -889,13 +966,22 @@ export default function EmailGenerator() {
                         <input type="hidden" name="action" value="save" />
                         <input type="hidden" name="emailType" value={actionData.emailType} />
                         <input type="hidden" name="tone" value={actionData.tone} />
-                        
                         <input type="hidden" name="subject" value={genSubject} />
                         <input type="hidden" name="preheader" value={genPreheader} />
                         <input type="hidden" name="heading" value={genHeading} />
                         <input type="hidden" name="body" value={genBody} />
                         <input type="hidden" name="footer" value={genFooter} />
                         <input type="hidden" name="buttonText" value={genButtonText} />
+                        <input type="hidden" name="buttonUrl" value={genButtonUrl} />
+                        <input type="hidden" name="includeStoreLogo" value={genIncludeLogo.toString()} />
+                        <input type="hidden" name="includeUnsubscribe" value={genIncludeUnsubscribe.toString()} />
+                        <input type="hidden" name="primaryColor" value={genPrimaryColor} />
+                        
+                        <Banner>
+                          <p>
+                            <strong>Available variables:</strong> {"{{customer_name}}, {{store_name}}, {{current_balance}}, {{credit_amount}}, {{tier_name}}, {{previous_tier}}, {{order_id}}, {{currency}}, {{store_url}}"}
+                          </p>
+                        </Banner>
                         
                         <TextField
                           label="Subject Line"
@@ -936,13 +1022,46 @@ export default function EmailGenerator() {
                         />
                         
                         {(actionData.generatedEmail.buttonText || genButtonText) && (
-                          <TextField
-                            label="Button Text"
-                            value={genButtonText}
-                            onChange={setGenButtonText}
-                            autoComplete="off"
-                          />
+                          <>
+                            <TextField
+                              label="Button Text"
+                              value={genButtonText}
+                              onChange={setGenButtonText}
+                              autoComplete="off"
+                            />
+                            <TextField
+                              label="Button URL"
+                              value={genButtonUrl}
+                              onChange={setGenButtonUrl}
+                              autoComplete="off"
+                              helpText="Use {{store_url}} for your shop URL"
+                            />
+                          </>
                         )}
+                        
+                        <InlineStack gap="400">
+                          <Checkbox
+                            label="Include store logo"
+                            checked={genIncludeLogo}
+                            onChange={setGenIncludeLogo}
+                          />
+                          <Checkbox
+                            label="Include unsubscribe link"
+                            checked={genIncludeUnsubscribe}
+                            onChange={setGenIncludeUnsubscribe}
+                          />
+                        </InlineStack>
+                        
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd">Primary Color</Text>
+                          <div style={{ maxWidth: '300px' }}>
+                            <ColorPicker
+                              onChange={(color) => setGenPrimaryColor(hsbToHex(color))}
+                              color={hexToHsb(genPrimaryColor)}
+                              allowAlpha={false}
+                            />
+                          </div>
+                        </BlockStack>
                         
                         <InlineStack gap="400">
                           <Button
@@ -965,13 +1084,25 @@ export default function EmailGenerator() {
                     <Divider />
                     
                     <BlockStack gap="200">
-                      <Text as="h3" variant="headingSm">Preview</Text>
+                      <Text as="h3" variant="headingSm">Live Preview</Text>
                       <div style={{
                         border: '1px solid #e0e0e0',
                         borderRadius: '8px',
                         padding: '20px',
                         backgroundColor: '#f9f9f9'
                       }}>
+                        {genIncludeLogo && (
+                          <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                            <div style={{
+                              display: 'inline-block',
+                              padding: '20px',
+                              backgroundColor: '#e0e0e0',
+                              borderRadius: '4px'
+                            }}>
+                              {shopName} Logo
+                            </div>
+                          </div>
+                        )}
                         <div style={{ marginBottom: '10px' }}>
                           <strong>Subject:</strong> {genSubject}
                         </div>
@@ -989,7 +1120,7 @@ export default function EmailGenerator() {
                         {genButtonText && (
                           <div style={{ margin: '20px 0', textAlign: 'center' }}>
                             <button style={{
-                              backgroundColor: '#1a1a1a',
+                              backgroundColor: genPrimaryColor,
                               color: 'white',
                               padding: '12px 24px',
                               borderRadius: '4px',
@@ -1003,6 +1134,12 @@ export default function EmailGenerator() {
                         )}
                         <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0', color: '#666', fontSize: '14px' }}>
                           {genFooter}
+                          {genIncludeUnsubscribe && (
+                            <p style={{ marginTop: '10px', fontSize: '12px' }}>
+                              <a href="#" style={{ color: '#666' }}>Unsubscribe</a> | 
+                              <a href="#" style={{ color: '#666' }}> Update Preferences</a>
+                            </p>
+                          )}
                         </div>
                       </div>
                     </BlockStack>
@@ -1065,6 +1202,18 @@ export default function EmailGenerator() {
                   padding: '20px',
                   backgroundColor: '#f9f9f9'
                 }}>
+                  {selectedTemplate.includeStoreLogo && (
+                    <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                      <div style={{
+                        display: 'inline-block',
+                        padding: '20px',
+                        backgroundColor: '#e0e0e0',
+                        borderRadius: '4px'
+                      }}>
+                        {shopName} Logo
+                      </div>
+                    </div>
+                  )}
                   <div style={{ marginBottom: '10px' }}>
                     <strong>Subject:</strong> {selectedTemplate.subject}
                   </div>
@@ -1076,7 +1225,7 @@ export default function EmailGenerator() {
                   {selectedTemplate.buttonText && (
                     <div style={{ margin: '20px 0', textAlign: 'center' }}>
                       <button style={{
-                        backgroundColor: '#1a1a1a',
+                        backgroundColor: selectedTemplate.primaryColor,
                         color: 'white',
                         padding: '12px 24px',
                         borderRadius: '4px',
@@ -1090,6 +1239,12 @@ export default function EmailGenerator() {
                   )}
                   <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0', color: '#666', fontSize: '14px' }}>
                     {selectedTemplate.footer}
+                    {selectedTemplate.includeUnsubscribe && (
+                      <p style={{ marginTop: '10px', fontSize: '12px' }}>
+                        <a href="#" style={{ color: '#666' }}>Unsubscribe</a> | 
+                        <a href="#" style={{ color: '#666' }}> Update Preferences</a>
+                      </p>
+                    )}
                   </div>
                 </div>
               </BlockStack>
@@ -1143,6 +1298,20 @@ export default function EmailGenerator() {
           <Modal.Section>
             {selectedTemplate && (
               <FormLayout>
+                <InlineStack gap="200">
+                  <Badge>{selectedTemplate.type}</Badge>
+                  <Badge>{selectedTemplate.tone}</Badge>
+                  <Badge tone={selectedTemplate.enabled ? "success" : undefined}>
+                    {selectedTemplate.enabled ? "Active" : "Inactive"}
+                  </Badge>
+                </InlineStack>
+                
+                <Banner>
+                  <p>
+                    <strong>Available variables:</strong> {"{{customer_name}}, {{store_name}}, {{current_balance}}, {{credit_amount}}, {{tier_name}}, {{previous_tier}}, {{order_id}}, {{currency}}, {{store_url}}"}
+                  </p>
+                </Banner>
+                
                 <TextField
                   label="Subject Line"
                   value={editSubject}
@@ -1190,6 +1359,38 @@ export default function EmailGenerator() {
                   helpText="Leave empty if no button is needed"
                 />
                 
+                <TextField
+                  label="Button URL"
+                  value={editButtonUrl}
+                  onChange={setEditButtonUrl}
+                  autoComplete="off"
+                  helpText="Use {{store_url}} for your shop URL"
+                />
+                
+                <InlineStack gap="400">
+                  <Checkbox
+                    label="Include store logo"
+                    checked={editIncludeLogo}
+                    onChange={setEditIncludeLogo}
+                  />
+                  <Checkbox
+                    label="Include unsubscribe link"
+                    checked={editIncludeUnsubscribe}
+                    onChange={setEditIncludeUnsubscribe}
+                  />
+                </InlineStack>
+                
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd">Primary Color</Text>
+                  <div style={{ maxWidth: '300px' }}>
+                    <ColorPicker
+                      onChange={(color) => setEditPrimaryColor(hsbToHex(color))}
+                      color={hexToHsb(editPrimaryColor)}
+                      allowAlpha={false}
+                    />
+                  </div>
+                </BlockStack>
+                
                 <Divider />
                 
                 <BlockStack gap="200">
@@ -1202,6 +1403,18 @@ export default function EmailGenerator() {
                     maxHeight: '400px',
                     overflow: 'auto'
                   }}>
+                    {editIncludeLogo && (
+                      <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                        <div style={{
+                          display: 'inline-block',
+                          padding: '20px',
+                          backgroundColor: '#e0e0e0',
+                          borderRadius: '4px'
+                        }}>
+                          {shopName} Logo
+                        </div>
+                      </div>
+                    )}
                     <div style={{ marginBottom: '10px' }}>
                       <strong>Subject:</strong> {editSubject}
                     </div>
@@ -1213,7 +1426,7 @@ export default function EmailGenerator() {
                     {editButtonText && (
                       <div style={{ margin: '20px 0', textAlign: 'center' }}>
                         <button style={{
-                          backgroundColor: '#1a1a1a',
+                          backgroundColor: editPrimaryColor,
                           color: 'white',
                           padding: '12px 24px',
                           borderRadius: '4px',
@@ -1227,6 +1440,12 @@ export default function EmailGenerator() {
                     )}
                     <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid #e0e0e0', color: '#666', fontSize: '14px' }}>
                       {editFooter}
+                      {editIncludeUnsubscribe && (
+                        <p style={{ marginTop: '10px', fontSize: '12px' }}>
+                          <a href="#" style={{ color: '#666' }}>Unsubscribe</a> | 
+                          <a href="#" style={{ color: '#666' }}> Update Preferences</a>
+                        </p>
+                      )}
                     </div>
                   </div>
                 </BlockStack>
