@@ -19,11 +19,15 @@
         },
         {
           "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, OPTIONS"
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, X-Shopify-Customer-Id"
+          "value": "Accept, Content-Type, X-Shopify-Customer-Id, X-Shopify-Shop-Domain"
+        },
+        {
+          "key": "Access-Control-Max-Age",
+          "value": "86400"
         }
       ]
     }

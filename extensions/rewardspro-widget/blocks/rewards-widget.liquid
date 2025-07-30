@@ -1,112 +1,96 @@
 <!-- File: extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
-<!-- This is the main app embed block that appears in App embeds section -->
+{% comment %} Simple rewards widget that works {% endcomment %}
 
-{% comment %} Only render if merchant has enabled the widget {% endcomment %}
 {% if block.settings.enabled %}
-  <div id="rewardspro-widget-{{ block.id }}" class="rewardspro-embed" data-block-id="{{ block.id }}">
-    {% comment %} Loading state container {% endcomment %}
-    <div class="rewardspro-loading-state">
-      <div class="rewardspro-spinner"></div>
-    </div>
-
-    {% comment %} Main widget container (hidden initially) {% endcomment %}
-    <div class="rewardspro-widget" style="display: none;">
-      {% comment %} Widget header with close button {% endcomment %}
-      <div class="rewardspro-widget-header">
-        <span class="rewardspro-widget-title">{{ block.settings.widget_title }}</span>
-        <button class="rewardspro-close-btn" aria-label="Close rewards widget">&times;</button>
-      </div>
-
-      {% comment %} Member content {% endcomment %}
-      <div class="rewardspro-member-content" style="display: none;">
-        <div class="rewardspro-points-display">
-          <div class="rewardspro-points-balance">
-            <span class="rewardspro-points-label">{{ block.settings.points_label }}</span>
-            <span class="rewardspro-points-value">--</span>
-          </div>
-          <div class="rewardspro-tier-info">
-            <span class="rewardspro-tier-label">Tier:</span>
-            <span class="rewardspro-tier-name">--</span>
-            <span class="rewardspro-cashback-rate">--</span>
-          </div>
-          {% if block.settings.show_total_earned %}
-          <div class="rewardspro-total-earned"></div>
-          {% endif %}
+  <div id="rewardspro-widget-{{ block.id }}" 
+       class="rewardspro-widget" 
+       data-block-id="{{ block.id }}"
+       data-position="{{ block.settings.position }}">
+    
+    {% comment %} Server-side customer detection {% endcomment %}
+    {% if customer %}
+      {% comment %} Customer is logged in - show member content {% endcomment %}
+      <div class="rp-content rp-member">
+        <div class="rp-header">
+          <span class="rp-title">{{ block.settings.widget_title }}</span>
+          <button class="rp-close" aria-label="Close">&times;</button>
         </div>
-
-        {% if block.settings.show_progress_bar %}
-        <div class="rewardspro-progress-container">
-          <div class="rewardspro-progress-info">
-            <span>Progress to next tier</span>
-            <span class="rewardspro-progress-text">-- / -- points</span>
+        
+        <div class="rp-body">
+          <div class="rp-welcome">
+            Welcome back, {{ customer.first_name | default: "Member" }}!
           </div>
-          <div class="rewardspro-progress-bar">
-            <div class="rewardspro-progress-fill" style="width: 0%;"></div>
+          
+          <div class="rp-info">
+            <div class="rp-balance">
+              <span class="rp-label">{{ block.settings.credit_label }}</span>
+              <span class="rp-value" data-credit="0">$0.00</span>
+            </div>
+            
+            <div class="rp-tier">
+              <span class="rp-label">Tier:</span>
+              <span class="rp-tier-name">Loading...</span>
+            </div>
           </div>
-        </div>
-        {% endif %}
-
-        <div class="rewardspro-actions">
-          {% if block.settings.show_redeem_button %}
-          <button class="rewardspro-btn rewardspro-btn-redeem">
-            {{ block.settings.redeem_button_text }}
-          </button>
-          {% endif %}
-          <a href="{{ block.settings.dashboard_url | default: '/pages/rewards' }}" class="rewardspro-btn rewardspro-btn-dashboard">
-            {{ block.settings.dashboard_button_text }}
-          </a>
+          
+          <div class="rp-actions">
+            <a href="{{ block.settings.dashboard_url }}" class="rp-btn rp-btn-primary">
+              {{ block.settings.dashboard_text }}
+            </a>
+          </div>
         </div>
       </div>
-
-      {% comment %} Guest content {% endcomment %}
-      <div class="rewardspro-guest-content" style="display: none;">
-        <div class="rewardspro-guest-message">
-          <p>{{ block.settings.guest_message }}</p>
+      
+      {% comment %} Pass customer data to JavaScript {% endcomment %}
+      <script>
+        window.RewardsProData = window.RewardsProData || {};
+        window.RewardsProData['{{ block.id }}'] = {
+          customerId: {{ customer.id | json }},
+          customerEmail: {{ customer.email | json }},
+          customerName: {{ customer.first_name | json }},
+          shopDomain: {{ shop.domain | json }},
+          apiEndpoint: {{ block.settings.api_endpoint | default: "https://rewardspro.vercel.app/apps/rewardspro/api" | json }},
+          blockId: {{ block.id | json }}
+        };
+      </script>
+      
+    {% else %}
+      {% comment %} Customer is not logged in - show guest content {% endcomment %}
+      <div class="rp-content rp-guest">
+        <div class="rp-header">
+          <span class="rp-title">{{ block.settings.widget_title }}</span>
+          <button class="rp-close" aria-label="Close">&times;</button>
         </div>
-        <div class="rewardspro-guest-actions">
-          <a href="/account/register" class="rewardspro-btn rewardspro-btn-join">
-            {{ block.settings.join_button_text }}
-          </a>
-          <a href="/account/login" class="rewardspro-btn rewardspro-btn-login">
-            Sign In
-          </a>
+        
+        <div class="rp-body">
+          <p class="rp-message">{{ block.settings.guest_message }}</p>
+          
+          <div class="rp-actions">
+            <a href="{{ routes.account_register_url }}" class="rp-btn rp-btn-primary">
+              {{ block.settings.join_text }}
+            </a>
+            <a href="{{ routes.account_login_url }}" class="rp-btn rp-btn-secondary">
+              Sign In
+            </a>
+          </div>
         </div>
       </div>
-    </div>
-
-    {% comment %} Minimized state {% endcomment %}
-    <button class="rewardspro-minimized" style="display: none;" aria-label="Open rewards widget">
-      <span class="rewardspro-minimized-icon">🎁</span>
-      <span class="rewardspro-minimized-text">Rewards</span>
-      <span class="rewardspro-minimized-points">--</span>
+    {% endif %}
+    
+    {% comment %} Minimized button {% endcomment %}
+    <button class="rp-minimized" aria-label="Open rewards" style="display: none;">
+      <span class="rp-icon">🎁</span>
+      <span class="rp-text">Rewards</span>
+      {% if customer %}
+        <span class="rp-mini-value">$0</span>
+      {% endif %}
     </button>
   </div>
-
-  {% comment %} Pass settings to JavaScript {% endcomment %}
-  <script>
-    window.RewardsProSettings = window.RewardsProSettings || {};
-    window.RewardsProSettings['{{ block.id }}'] = {
-      blockId: '{{ block.id }}',
-      position: '{{ block.settings.position }}',
-      startMinimized: {{ block.settings.start_minimized }},
-      apiEndpoint: '{{ block.settings.api_endpoint | default: "/apps/rewardspro/api" }}',
-      theme: {
-        primaryColor: '{{ block.settings.primary_color }}',
-        secondaryColor: '{{ block.settings.secondary_color }}',
-        textColor: '{{ block.settings.text_color }}',
-        backgroundColor: '{{ block.settings.background_color }}'
-      },
-      animation: '{{ block.settings.animation_style }}',
-      showOnMobile: {{ block.settings.show_on_mobile }},
-      autoShow: {{ block.settings.auto_show_new_members }},
-      cookieExpiry: {{ block.settings.cookie_expiry_days }}
-    };
-  </script>
 {% endif %}
 
 {% schema %}
 {
-  "name": "RewardsPro Widget",
+  "name": "Rewards Widget",
   "target": "body",
   "stylesheet": "rewards-widget.css",
   "javascript": "rewards-widget.js",
@@ -114,13 +98,8 @@
     {
       "type": "checkbox",
       "id": "enabled",
-      "label": "Enable Rewards Widget",
-      "default": true,
-      "info": "Show the rewards widget on your storefront"
-    },
-    {
-      "type": "header",
-      "content": "Widget Content"
+      "label": "Enable Widget",
+      "default": true
     },
     {
       "type": "text",
@@ -130,200 +109,52 @@
     },
     {
       "type": "text",
-      "id": "points_label",
-      "label": "Store Credit Label",
+      "id": "credit_label",
+      "label": "Credit Label",
       "default": "Store Credit:"
     },
     {
       "type": "textarea",
       "id": "guest_message",
       "label": "Guest Message",
-      "default": "Join our rewards program and earn points on every purchase!"
+      "default": "Join our rewards program and earn cashback on every purchase!"
     },
     {
       "type": "text",
-      "id": "join_button_text",
+      "id": "join_text",
       "label": "Join Button Text",
       "default": "Join Now"
     },
     {
       "type": "text",
-      "id": "redeem_button_text",
-      "label": "Redeem Button Text",
-      "default": "Redeem Points"
-    },
-    {
-      "type": "text",
-      "id": "dashboard_button_text",
+      "id": "dashboard_text",
       "label": "Dashboard Button Text",
-      "default": "View All Rewards"
-    },
-    {
-      "type": "header",
-      "content": "Display Settings"
-    },
-    {
-      "type": "select",
-      "id": "position",
-      "label": "Widget Position",
-      "options": [
-        {
-          "value": "bottom-right",
-          "label": "Bottom Right"
-        },
-        {
-          "value": "bottom-left",
-          "label": "Bottom Left"
-        },
-        {
-          "value": "top-right",
-          "label": "Top Right"
-        },
-        {
-          "value": "top-left",
-          "label": "Top Left"
-        }
-      ],
-      "default": "bottom-right"
-    },
-    {
-      "type": "checkbox",
-      "id": "start_minimized",
-      "label": "Start Minimized",
-      "default": false,
-      "info": "Widget starts in minimized state"
-    },
-    {
-      "type": "checkbox",
-      "id": "show_progress_bar",
-      "label": "Show Tier Progress Bar",
-      "default": true
-    },
-    {
-      "type": "checkbox",
-      "id": "show_redeem_button",
-      "label": "Show Redeem Button",
-      "default": true
-    },
-    {
-      "type": "checkbox",
-      "id": "show_on_mobile",
-      "label": "Show on Mobile",
-      "default": true
-    },
-    {
-      "type": "checkbox",
-      "id": "auto_show_new_members",
-      "label": "Auto-show for New Members",
-      "default": true,
-      "info": "Automatically open widget for members who haven't seen it yet"
-    },
-    {
-      "type": "header",
-      "content": "Appearance"
-    },
-    {
-      "type": "color",
-      "id": "primary_color",
-      "label": "Primary Color",
-      "default": "#007bff"
-    },
-    {
-      "type": "color",
-      "id": "secondary_color",
-      "label": "Secondary Color",
-      "default": "#6c757d"
-    },
-    {
-      "type": "color",
-      "id": "text_color",
-      "label": "Text Color",
-      "default": "#333333"
-    },
-    {
-      "type": "color",
-      "id": "background_color",
-      "label": "Background Color",
-      "default": "#ffffff"
-    },
-    {
-      "type": "select",
-      "id": "animation_style",
-      "label": "Animation Style",
-      "options": [
-        {
-          "value": "slide",
-          "label": "Slide"
-        },
-        {
-          "value": "fade",
-          "label": "Fade"
-        },
-        {
-          "value": "pop",
-          "label": "Pop"
-        },
-        {
-          "value": "none",
-          "label": "None"
-        }
-      ],
-      "default": "slide"
-    },
-    {
-      "type": "header",
-      "content": "Advanced Settings"
-    },
-    {
-      "type": "text",
-      "id": "api_endpoint",
-      "label": "API Endpoint",
-      "default": "/apps/rewardspro/api",
-      "info": "Endpoint for fetching rewards data"
+      "default": "View Dashboard"
     },
     {
       "type": "text",
       "id": "dashboard_url",
       "label": "Dashboard URL",
-      "default": "/pages/rewards",
-      "info": "URL to your rewards dashboard page"
+      "default": "/pages/rewards"
     },
     {
       "type": "select",
-      "id": "cookie_expiry_days",
-      "label": "Cookie Expiry",
+      "id": "position",
+      "label": "Position",
       "options": [
-        {
-          "value": "7",
-          "label": "1 week"
-        },
-        {
-          "value": "14",
-          "label": "2 weeks"
-        },
-        {
-          "value": "30",
-          "label": "1 month"
-        },
-        {
-          "value": "60",
-          "label": "2 months"
-        },
-        {
-          "value": "90",
-          "label": "3 months"
-        },
-        {
-          "value": "180",
-          "label": "6 months"
-        },
-        {
-          "value": "365",
-          "label": "1 year"
-        }
+        {"value": "bottom-right", "label": "Bottom Right"},
+        {"value": "bottom-left", "label": "Bottom Left"},
+        {"value": "top-right", "label": "Top Right"},
+        {"value": "top-left", "label": "Top Left"}
       ],
-      "default": "30",
-      "info": "How long to remember widget state"
+      "default": "bottom-right"
+    },
+    {
+      "type": "text",
+      "id": "api_endpoint",
+      "label": "API Endpoint",
+      "default": "https://rewardspro.vercel.app/apps/rewardspro/api",
+      "info": "Your Vercel app URL"
     }
   ]
 }
