@@ -27,7 +27,11 @@
           <div class="rewardspro-tier-info">
             <span class="rewardspro-tier-label">Tier:</span>
             <span class="rewardspro-tier-name">--</span>
+            <span class="rewardspro-cashback-rate">--</span>
           </div>
+          {% if block.settings.show_total_earned %}
+          <div class="rewardspro-total-earned"></div>
+          {% endif %}
         </div>
 
         {% if block.settings.show_progress_bar %}
@@ -127,8 +131,8 @@
     {
       "type": "text",
       "id": "points_label",
-      "label": "Points Label",
-      "default": "Points:"
+      "label": "Store Credit Label",
+      "default": "Store Credit:"
     },
     {
       "type": "textarea",
@@ -285,13 +289,40 @@
       "info": "URL to your rewards dashboard page"
     },
     {
-      "type": "range",
+      "type": "select",
       "id": "cookie_expiry_days",
-      "label": "Cookie Expiry (days)",
-      "min": 1,
-      "max": 90,
-      "step": 1,
-      "default": 30,
+      "label": "Cookie Expiry",
+      "options": [
+        {
+          "value": "7",
+          "label": "1 week"
+        },
+        {
+          "value": "14",
+          "label": "2 weeks"
+        },
+        {
+          "value": "30",
+          "label": "1 month"
+        },
+        {
+          "value": "60",
+          "label": "2 months"
+        },
+        {
+          "value": "90",
+          "label": "3 months"
+        },
+        {
+          "value": "180",
+          "label": "6 months"
+        },
+        {
+          "value": "365",
+          "label": "1 year"
+        }
+      ],
+      "default": "30",
       "info": "How long to remember widget state"
     }
   ]
