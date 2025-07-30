@@ -21,6 +21,14 @@
             Welcome back, {{ customer.first_name | default: "Member" }}!
           </div>
           
+          {% comment %} Debug info - Customer ID display {% endcomment %}
+          <div style="padding: 10px; background: #f0f0f0; border-radius: 5px; margin-bottom: 10px; font-size: 12px;">
+            <strong>Debug Info:</strong><br>
+            Customer ID: <code id="debug-customer-id">{{ customer.id }}</code><br>
+            Email: <code>{{ customer.email }}</code><br>
+            <span id="debug-api-status" style="color: #666;">API Status: Waiting...</span>
+          </div>
+          
           <div class="rp-info">
             <div class="rp-balance">
               <span class="rp-label">{{ block.settings.credit_label }}</span>
@@ -50,8 +58,10 @@
           customerName: {{ customer.first_name | json }},
           shopDomain: {{ shop.domain | json }},
           apiEndpoint: {{ block.settings.api_endpoint | default: "https://rewardspro.vercel.app/apps/rewardspro/api" | json }},
-          blockId: {{ block.id | json }}
+          blockId: {{ block.id | json }},
+          debug: true
         };
+        console.log('RewardsProData initialized:', window.RewardsProData['{{ block.id }}']);
       </script>
       
     {% else %}
@@ -64,6 +74,12 @@
         
         <div class="rp-body">
           <p class="rp-message">{{ block.settings.guest_message }}</p>
+          
+          {% comment %} Debug info for guest {% endcomment %}
+          <div style="padding: 10px; background: #f0f0f0; border-radius: 5px; margin-bottom: 10px; font-size: 12px;">
+            <strong>Debug Info:</strong><br>
+            Status: Not logged in
+          </div>
           
           <div class="rp-actions">
             <a href="{{ routes.account_register_url }}" class="rp-btn rp-btn-primary">
