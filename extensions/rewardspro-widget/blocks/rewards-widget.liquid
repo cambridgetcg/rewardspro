@@ -3,31 +3,6 @@
 
 {% comment %} Only render if merchant has enabled the widget {% endcomment %}
 {% if block.settings.enabled %}
-{% comment %} Ensure customer ID is available to JavaScript {% endcomment %}
-{% if customer %}
-  <script>
-    // Ensure customer data is available for the widget
-    window.RewardsProCustomer = {
-      id: "{{ customer.id }}",
-      email: "{{ customer.email }}",
-      logged_in: true
-    };
-    
-    // Fallback for ShopifyAnalytics
-    if (!window.ShopifyAnalytics) {
-      window.ShopifyAnalytics = { meta: { page: {} } };
-    }
-    if (!window.ShopifyAnalytics.meta.page.customerId) {
-      window.ShopifyAnalytics.meta.page.customerId = "{{ customer.id }}";
-    }
-  </script>
-{% else %}
-  <script>
-    window.RewardsProCustomer = {
-      logged_in: false
-    };
-  </script>
-{% endif %}
   <div id="rewardspro-widget-{{ block.id }}" class="rewardspro-embed" data-block-id="{{ block.id }}">
     {% comment %} Loading state container {% endcomment %}
     <div class="rewardspro-loading-state">
