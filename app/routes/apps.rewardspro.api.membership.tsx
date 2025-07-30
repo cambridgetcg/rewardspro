@@ -1,5 +1,5 @@
-// File: app/routes/apps.rewardspro.api.membership.tsx
-// Simple API route for membership data
+// File: app/routes/api.membership.tsx
+// Simplified API route for membership data
 
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
