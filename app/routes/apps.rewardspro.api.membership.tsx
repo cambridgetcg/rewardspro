@@ -1,23 +1,53 @@
-// File: app/routes/api.membership.tsx
-// Simplified API route for membership data
+// File: app/routes/apps.rewardspro.api.membership.tsx
+// API route for widget membership data
 
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  // Set CORS headers for all responses
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Shopify-Customer-Id",
-    "Access-Control-Allow-Credentials": "true",
-  };
-
-  // Handle preflight
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
+// Determine allowed origins based on environment
+const getAllowedOrigin = (request: Request): string => {
+  const origin = request.headers.get("origin");
+  
+  // In production, be more restrictive
+  if (process.env.NODE_ENV === "production") {
+    const allowedOrigins = [
+      "https://cdn.shopify.com",
+      "https://extensions.shopifycdn.com",
+      // Add your specific store domains if needed
+    ];
+    
+    if (origin && allowedOrigins.includes(origin)) {
+      return origin;
+    }
+    
+    // Default to first allowed origin if request origin not in list
+    return allowedOrigins[0];
   }
+  
+  // In development, allow localhost
+  return origin || "http://localhost:3000";
+};
+
+// CORS headers function
+const getCorsHeaders = (request: Request) => ({
+  "Access-Control-Allow-Origin": getAllowedOrigin(request),
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-Shopify-Customer-Id",
+  // Remove credentials or use specific origin
+  "Access-Control-Max-Age": "86400", // Cache preflight for 24 hours
+});
+
+// Handle OPTIONS requests separately
+export async function OPTIONS({ request }: LoaderFunctionArgs) {
+  return new Response(null, {
+    status: 204,
+    headers: getCorsHeaders(request),
+  });
+}
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const corsHeaders = getCorsHeaders(request);
 
   try {
     // Get customer ID and shop from request
@@ -39,6 +69,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       );
     }
 
+    // Validate shop domain format (basic security)
+    const shopDomainRegex = /^[a-zA-Z0-9][a-zA-Z0-9\-]*\.myshopify\.com$/;
+    if (!shopDomainRegex.test(shopDomain)) {
+      return json(
+        { error: "Invalid shop domain format" },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
     // Try to find customer in database
     const customer = await prisma.customer.findUnique({
       where: {
@@ -50,7 +89,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       include: {
         membershipHistory: {
           where: { isActive: true },
-          include: { tier: true }
+          include: { tier: true },
+          orderBy: { startDate: 'desc' },
+          take: 1
         }
       }
     });
@@ -103,10 +144,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (error) {
     console.error("API Error:", error);
     
+    // Don't expose internal error details in production
+    const errorMessage = process.env.NODE_ENV === "production" 
+      ? "Internal server error" 
+      : error instanceof Error ? error.message : "Unknown error";
+    
     return json(
       { 
         error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error"
+        message: errorMessage
       },
       { status: 500, headers: corsHeaders }
     );
