@@ -49,8 +49,8 @@ export default function App() {
         <Link to="/app/dashboard">
           Dashboard
         </Link>
-        <Link to="/app/import-test">
-          Test Import Bebaviour
+        <Link to="/app/import-orders">
+          Import
         </Link>
 
         <Link to="/app/test-transactions">
