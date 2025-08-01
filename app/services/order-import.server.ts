@@ -19,51 +19,16 @@ interface OrderNode {
   id: string;
   name: string;
   createdAt: string;
-  updatedAt: string;
   totalPriceSet: {
     shopMoney: {
       amount: string;
       currencyCode: string;
     };
   };
-  subtotalPriceSet: {
-    shopMoney: {
-      amount: string;
-    };
-  };
-  totalTaxSet: {
-    shopMoney: {
-      amount: string;
-    };
-  };
   displayFinancialStatus: string;
-  financialStatus: string;
-  lineItems: {
-    edges: Array<{
-      node: {
-        id: string;
-        title: string;
-        quantity: number;
-        originalUnitPriceSet: {
-          shopMoney: {
-            amount: string;
-          };
-        };
-      };
-    }>;
-  };
   customer: {
     id: string;
     email: string;
-    firstName: string | null;
-    lastName: string | null;
-    phone: string | null;
-    ordersCount: string;
-    totalSpent: {
-      amount: string;
-      currencyCode: string;
-    };
-    createdAt: string;
   } | null;
 }
 
@@ -169,51 +134,16 @@ export async function processOrdersImport(options: ImportOptions): Promise<Impor
                 id
                 name
                 createdAt
-                updatedAt
                 totalPriceSet {
                   shopMoney {
                     amount
                     currencyCode
                   }
                 }
-                subtotalPriceSet {
-                  shopMoney {
-                    amount
-                  }
-                }
-                totalTaxSet {
-                  shopMoney {
-                    amount
-                  }
-                }
                 displayFinancialStatus
-                financialStatus
-                lineItems(first: 250) {
-                  edges {
-                    node {
-                      id
-                      title
-                      quantity
-                      originalUnitPriceSet {
-                        shopMoney {
-                          amount
-                        }
-                      }
-                    }
-                  }
-                }
                 customer {
                   id
                   email
-                  firstName
-                  lastName
-                  phone
-                  ordersCount
-                  totalSpent {
-                    amount
-                    currencyCode
-                  }
-                  createdAt
                 }
               }
               cursor
@@ -295,8 +225,7 @@ export async function processOrdersImport(options: ImportOptions): Promise<Impor
                   shopifyCustomerId,
                   email: customerData.email,
                   storeCredit: 0,
-                  totalEarned: 0,
-                  createdAt: new Date(customerData.createdAt)
+                  totalEarned: 0
                 }
               });
               result.newCustomers++;
@@ -721,15 +650,7 @@ async function updateCustomersFromShopify(
             query GetCustomer($id: ID!) {
               customer(id: $id) {
                 id
-                firstName
-                lastName
                 email
-                phone
-                ordersCount
-                totalSpent {
-                  amount
-                  currencyCode
-                }
                 metafields(first: 10, namespace: "cashback") {
                   edges {
                     node {
@@ -879,5 +800,43 @@ export async function syncStoreCreditToShopify(
   } catch (error) {
     console.error('Store credit sync error:', error);
     throw error;
+  }
+}
+
+// Helper function to fetch full customer details if needed
+export async function fetchCustomerDetails(
+  shopifyCustomerId: string,
+  admin: AdminGraphQLClient
+): Promise<any> {
+  const query = `
+    query GetCustomerDetails($id: ID!) {
+      customer(id: $id) {
+        id
+        email
+        firstName
+        lastName
+        phone
+        createdAt
+        ordersCount
+        totalSpent {
+          amount
+          currencyCode
+        }
+      }
+    }
+  `;
+  
+  try {
+    const response = await admin.graphql(query, {
+      variables: {
+        id: `gid://shopify/Customer/${shopifyCustomerId}`
+      }
+    });
+    
+    const data = await response.json();
+    return data.data?.customer || null;
+  } catch (error) {
+    console.error('Error fetching customer details:', error);
+    return null;
   }
 }
