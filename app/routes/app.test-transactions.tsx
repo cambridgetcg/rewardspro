@@ -486,13 +486,6 @@ export async function action({ request }: ActionFunctionArgs) {
             parentTransaction {
               id
             }
-            # User who performed the transaction
-            user {
-              id
-              email
-              firstName
-              lastName
-            }
           }
           
           # ADDITIONAL NOTES:
