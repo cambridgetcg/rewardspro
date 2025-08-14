@@ -415,17 +415,7 @@ export async function action({ request }: ActionFunctionArgs) {
             }
           }
           
-          # Cash rounding adjustment
-          totalCashRoundingAdjustment {
-            presentmentMoney {
-              amount
-              currencyCode
-            }
-            shopMoney {
-              amount
-              currencyCode
-            }
-          }
+          # Cash rounding adjustment - Note: Has a different structure, skipping for now
           
           # BOOLEAN FLAGS
           taxesIncluded
@@ -462,8 +452,6 @@ export async function action({ request }: ActionFunctionArgs) {
             createdAt
             authorizationCode
             authorizationExpiresAt
-            # Receipt for POS transactions
-            receipt
             # The amount and currency
             amountSet {
               shopMoney { 
@@ -486,7 +474,7 @@ export async function action({ request }: ActionFunctionArgs) {
                 currencyCode
               }
               flatFeeName
-              percentage
+              # percentage field removed - not available
               type
             }
             # Maximum amount that can be refunded
@@ -498,16 +486,6 @@ export async function action({ request }: ActionFunctionArgs) {
             parentTransaction {
               id
             }
-            # Payments associated with this transaction
-            paymentDetails {
-              ... on CardPaymentDetails {
-                avsResultCode
-                creditCardCompany
-                creditCardNumber
-                cvvResultCode
-                creditCardName
-              }
-            }
             # User who performed the transaction
             user {
               id
@@ -516,6 +494,12 @@ export async function action({ request }: ActionFunctionArgs) {
               lastName
             }
           }
+          
+          # ADDITIONAL NOTES:
+          # - CashRoundingAdjustment has a different structure and is rarely used
+          # - PaymentDetails requires more complex fragment handling
+          # - receipt field is not available on OrderTransaction
+          # - percentage is not directly available on TransactionFee
           
           # Additional context
           discountCodes
@@ -736,8 +720,11 @@ export default function TestTransactions() {
           <li>The Order ID is in the URL: /admin/orders/<strong>1234567890</strong></li>
           <li>Or use the order number without the # (e.g., "1001" instead of "#1001")</li>
         </ol>
-        <p style={{ marginTop: "12px", marginBottom: "0" }}>
+        <p style={{ marginTop: "8px", marginBottom: "0" }}>
           <strong>This test will fetch ALL pricing fields</strong> to help determine the correct amount for cashback calculation.
+        </p>
+        <p style={{ marginTop: "8px", marginBottom: "0", color: "#7c3aed" }}>
+          <strong>Note:</strong> Gift cards are identified by the gateway field value "gift_card" and store credits by "shopify_store_credit" in transactions.
         </p>
       </div>
       
