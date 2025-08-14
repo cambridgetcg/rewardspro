@@ -24,8 +24,32 @@ type ActionResponse =
           kind: string;
           status: string;
         }>;
+        // All pricing fields for comparison
+        allPricingFields: {
+          totalPriceSet: number;
+          currentTotalPriceSet: number;
+          originalTotalPriceSet: number;
+          totalReceivedSet: number;
+          netPaymentSet: number;
+          totalOutstandingSet: number;
+          subtotalPriceSet: number;
+          currentSubtotalPriceSet: number;
+          totalRefundedSet: number;
+          totalCapturableSet: number;
+          totalDiscountsSet: number;
+          currentTotalDiscountsSet: number;
+          totalTaxSet: number;
+          currentTotalTaxSet: number;
+          totalShippingPriceSet: number;
+          currentShippingPriceSet: number;
+          totalTipReceivedSet: number;
+          totalDutiesSet: number;
+          currentTotalDutiesSet: number;
+          totalAdditionalFeesSet: number;
+          currentTotalAdditionalFeesSet: number;
+        };
       };
-      rawResponse: any; // Added to store the raw GraphQL response
+      rawResponse: any;
       error?: never;
     };
 
@@ -74,84 +98,430 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   
   try {
-    // Enhanced query to get more payment details
+    // Comprehensive query to get ALL pricing-related fields
     const query = `#graphql
-      query GetOrderPaidAmount($id: ID!) {
+      query GetOrderComprehensivePricing($id: ID!) {
         order(id: $id) {
           id
           name
           currencyCode
           
-          # Total order amount
+          # MAIN TOTAL FIELDS
+          # Total price before returns (includes taxes and discounts)
           totalPriceSet {
             shopMoney {
               amount
               currencyCode
             }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
           }
           
-          # Subtotal (before discounts and shipping)
+          # Current total after returns
+          currentTotalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Original total at creation time
+          originalTotalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # PAYMENT FIELDS
+          # Total amount actually received from customer
+          totalReceivedSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Net payment (received minus refunded)
+          netPaymentSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Amount still outstanding
+          totalOutstandingSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Amount that can be captured
+          totalCapturableSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # SUBTOTAL FIELDS
+          # Subtotal before returns
           subtotalPriceSet {
             shopMoney {
               amount
               currencyCode
             }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
           }
           
-          # Total discounts
+          # Current subtotal after returns
+          currentSubtotalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # REFUND FIELDS
+          # Total amount refunded
+          totalRefundedSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Refunded shipping
+          totalRefundedShippingSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Refund discrepancy
+          refundDiscrepancySet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # DISCOUNT FIELDS
+          # Total discounts before returns
           totalDiscountsSet {
             shopMoney {
               amount
               currencyCode
             }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
           }
           
-          # Tax amount
+          # Current total discounts
+          currentTotalDiscountsSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Cart-level discounts
+          cartDiscountAmountSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Current cart-level discounts
+          currentCartDiscountAmountSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # TAX FIELDS
+          # Total tax before returns
           totalTaxSet {
             shopMoney {
               amount
               currencyCode
             }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
           }
           
-          # Shipping cost
+          # Current total tax
+          currentTotalTaxSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # SHIPPING FIELDS
+          # Total shipping price
           totalShippingPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Current shipping price
+          currentShippingPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # TIP FIELDS
+          # Total tips received
+          totalTipReceivedSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # DUTIES AND FEES
+          # Original total duties
+          originalTotalDutiesSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Current total duties
+          currentTotalDutiesSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Original additional fees
+          originalTotalAdditionalFeesSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Current additional fees
+          currentTotalAdditionalFeesSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Cash rounding adjustment
+          totalCashRoundingAdjustment {
+            presentmentMoney {
+              amount
+              currencyCode
+            }
             shopMoney {
               amount
               currencyCode
             }
           }
           
-          # Payment gateway names (helpful for identification)
+          # BOOLEAN FLAGS
+          taxesIncluded
+          taxExempt
+          dutiesIncluded
+          fullyPaid
+          unpaid
+          test
+          confirmed
+          capturable
+          refundable
+          restockable
+          
+          # STATUS FIELDS
+          displayFinancialStatus
+          displayFulfillmentStatus
+          cancelReason
+          cancelledAt
+          closedAt
+          processedAt
+          
+          # Payment gateway names
           paymentGatewayNames
           
-          # Financial status
-          displayFinancialStatus
-          
-          # Transactions - using gateway field for identification
+          # TRANSACTIONS WITH ALL FIELDS
           transactions(first: 250) {
             id
-            gateway             # Payment gateway name (gift_card, shopify_store_credit, etc.)
-            status              # SUCCESS, FAILED, etc.
-            kind                # SALE, CAPTURE, REFUND, ...
-            test                # Is this a test transaction
-            errorCode           # Error code if failed
-            processedAt         # When it was processed
+            gateway
+            status
+            kind
+            test
+            errorCode
+            processedAt
+            createdAt
+            authorizationCode
+            authorizationExpiresAt
+            # Receipt for POS transactions
+            receipt
+            # The amount and currency
             amountSet {
               shopMoney { 
                 amount 
                 currencyCode
               }
+              presentmentMoney {
+                amount
+                currencyCode
+              }
             }
-            # Additional transaction details
+            # Fees charged by payment gateway
+            fees {
+              amount {
+                amount
+                currencyCode
+              }
+              flatFee {
+                amount
+                currencyCode
+              }
+              flatFeeName
+              percentage
+              type
+            }
+            # Maximum amount that can be refunded
+            maximumRefundableV2 {
+              amount
+              currencyCode
+            }
+            # Parent transaction reference
             parentTransaction {
               id
             }
+            # Payments associated with this transaction
+            paymentDetails {
+              ... on CardPaymentDetails {
+                avsResultCode
+                creditCardCompany
+                creditCardNumber
+                cvvResultCode
+                creditCardName
+              }
+            }
+            # User who performed the transaction
+            user {
+              id
+              email
+              firstName
+              lastName
+            }
           }
           
-          # Additional payment info
-          refundable
-          fullyPaid
+          # Additional context
+          discountCodes
+          note
+          poNumber
+          tags
         }
       }
     `;
@@ -182,12 +552,47 @@ export async function action({ request }: ActionFunctionArgs) {
     const order = result.data.order;
     const transactions = order.transactions || [];
     
+    // Extract all pricing fields for comparison
+    const extractAmount = (priceSet: any) => {
+      if (!priceSet || !priceSet.shopMoney) return 0;
+      return parseFloat(priceSet.shopMoney.amount);
+    };
+    
+    const allPricingFields = {
+      totalPriceSet: extractAmount(order.totalPriceSet),
+      currentTotalPriceSet: extractAmount(order.currentTotalPriceSet),
+      originalTotalPriceSet: extractAmount(order.originalTotalPriceSet),
+      totalReceivedSet: extractAmount(order.totalReceivedSet),
+      netPaymentSet: extractAmount(order.netPaymentSet),
+      totalOutstandingSet: extractAmount(order.totalOutstandingSet),
+      subtotalPriceSet: extractAmount(order.subtotalPriceSet),
+      currentSubtotalPriceSet: extractAmount(order.currentSubtotalPriceSet),
+      totalRefundedSet: extractAmount(order.totalRefundedSet),
+      totalCapturableSet: extractAmount(order.totalCapturableSet),
+      totalDiscountsSet: extractAmount(order.totalDiscountsSet),
+      currentTotalDiscountsSet: extractAmount(order.currentTotalDiscountsSet),
+      totalTaxSet: extractAmount(order.totalTaxSet),
+      currentTotalTaxSet: extractAmount(order.currentTotalTaxSet),
+      totalShippingPriceSet: extractAmount(order.totalShippingPriceSet),
+      currentShippingPriceSet: extractAmount(order.currentShippingPriceSet),
+      totalTipReceivedSet: extractAmount(order.totalTipReceivedSet),
+      totalDutiesSet: extractAmount(order.originalTotalDutiesSet),
+      currentTotalDutiesSet: extractAmount(order.currentTotalDutiesSet),
+      totalAdditionalFeesSet: extractAmount(order.originalTotalAdditionalFeesSet),
+      currentTotalAdditionalFeesSet: extractAmount(order.currentTotalAdditionalFeesSet),
+    };
+    
     // Calculate payment breakdown using the gateway field
     let giftCardAmount = 0;
     let storeCreditAmount = 0;
     
-    console.log("\n=== CASHBACK CALCULATION (GATEWAY-BASED METHOD) ===");
-    console.log(`Order Total: ${order.totalPriceSet.shopMoney.amount} ${order.currencyCode}`);
+    console.log("\n=== COMPREHENSIVE PRICING ANALYSIS ===");
+    console.log("\nAll Pricing Fields:");
+    Object.entries(allPricingFields).forEach(([key, value]) => {
+      console.log(`  ${key}: ${value} ${order.currencyCode}`);
+    });
+    
+    console.log("\n=== TRANSACTION ANALYSIS ===");
     console.log(`Payment Gateways: ${order.paymentGatewayNames?.join(', ') || 'none'}`);
     console.log(`\nAnalyzing transactions by gateway:`);
     
@@ -208,6 +613,14 @@ export async function action({ request }: ActionFunctionArgs) {
         console.log(`  Kind: ${tx.kind}`);
         console.log(`  Status: ${tx.status}`);
         console.log(`  Amount: ${amount} ${tx.amountSet.shopMoney.currencyCode}`);
+        console.log(`  Test: ${tx.test}`);
+        console.log(`  Processed At: ${tx.processedAt}`);
+        if (tx.fees && tx.fees.length > 0) {
+          console.log(`  Fees: ${JSON.stringify(tx.fees)}`);
+        }
+        if (tx.maximumRefundableV2) {
+          console.log(`  Maximum Refundable: ${tx.maximumRefundableV2.amount} ${tx.maximumRefundableV2.currencyCode}`);
+        }
         
         // Use gateway field to identify gift cards and store credits
         if (gateway === 'gift_card' || gateway.includes('gift_card')) {
@@ -231,21 +644,36 @@ export async function action({ request }: ActionFunctionArgs) {
         };
       });
     
-    // Calculate using subtraction
-    const orderTotal = parseFloat(order.totalPriceSet.shopMoney.amount);
-    const cashbackEligibleAmount = orderTotal - giftCardAmount - storeCreditAmount;
+    // Calculate using different methods
+    const orderTotal = extractAmount(order.totalPriceSet);
+    const totalReceived = extractAmount(order.totalReceivedSet);
+    const netPayment = extractAmount(order.netPaymentSet);
     
-    // Alternative calculation: sum only external payments
+    // Method 1: Subtract gift cards and store credit from total price
+    const cashbackEligibleMethod1 = orderTotal - giftCardAmount - storeCreditAmount;
+    
+    // Method 2: Subtract from total received
+    const cashbackEligibleMethod2 = totalReceived - giftCardAmount - storeCreditAmount;
+    
+    // Method 3: Subtract from net payment
+    const cashbackEligibleMethod3 = netPayment - giftCardAmount - storeCreditAmount;
+    
+    // Method 4: Sum only external payments
     const externalPaymentAmount = processedTransactions
       .filter((tx: any) => tx.type === 'EXTERNAL')
       .reduce((sum: number, tx: any) => sum + tx.amount, 0);
     
-    console.log("\n=== FINAL CALCULATION ===");
-    console.log(`Order Total: ${orderTotal} ${order.currencyCode}`);
+    console.log("\n=== CASHBACK CALCULATION COMPARISON ===");
+    console.log(`Order Total (totalPriceSet): ${orderTotal} ${order.currencyCode}`);
+    console.log(`Total Received (totalReceivedSet): ${totalReceived} ${order.currencyCode}`);
+    console.log(`Net Payment (netPaymentSet): ${netPayment} ${order.currencyCode}`);
     console.log(`- Gift Cards: ${giftCardAmount} ${order.currencyCode}`);
     console.log(`- Store Credits: ${storeCreditAmount} ${order.currencyCode}`);
-    console.log(`= Cashback Eligible (subtraction): ${cashbackEligibleAmount} ${order.currencyCode}`);
-    console.log(`= External Payments (direct sum): ${externalPaymentAmount} ${order.currencyCode}`);
+    console.log("\nCashback Eligible Amount Options:");
+    console.log(`  Method 1 (totalPrice - gift/credit): ${cashbackEligibleMethod1} ${order.currencyCode}`);
+    console.log(`  Method 2 (totalReceived - gift/credit): ${cashbackEligibleMethod2} ${order.currencyCode}`);
+    console.log(`  Method 3 (netPayment - gift/credit): ${cashbackEligibleMethod3} ${order.currencyCode}`);
+    console.log(`  Method 4 (sum external payments): ${externalPaymentAmount} ${order.currencyCode}`);
     console.log("========================\n");
     
     return json<ActionResponse>({
@@ -256,11 +684,12 @@ export async function action({ request }: ActionFunctionArgs) {
         orderTotal,
         giftCardAmount,
         storeCreditAmount,
-        cashbackEligibleAmount: externalPaymentAmount, // Using the direct sum method
+        cashbackEligibleAmount: externalPaymentAmount, // Using method 4 by default
         currency: order.currencyCode,
-        transactions: processedTransactions
+        transactions: processedTransactions,
+        allPricingFields
       },
-      rawResponse: result // Include the raw GraphQL response
+      rawResponse: result
     });
     
   } catch (error) {
@@ -287,9 +716,9 @@ export default function TestTransactions() {
   };
   
   return (
-    <div style={{ maxWidth: "900px", margin: "0 auto", padding: "40px 20px" }}>
+    <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "40px 20px" }}>
       <h1 style={{ fontSize: "24px", marginBottom: "24px" }}>
-        Cashback Transaction Test (Gateway-Based Method)
+        Comprehensive Order Pricing Analysis
       </h1>
       
       <div style={{
@@ -303,15 +732,12 @@ export default function TestTransactions() {
         <strong>How to find an Order ID:</strong>
         <ol style={{ marginTop: "8px", marginBottom: "0", paddingLeft: "20px" }}>
           <li>Go to your Shopify Admin → Orders</li>
-          <li>Click on any order</li>
+          <li>Click on any order (preferably one with gift cards or store credit)</li>
           <li>The Order ID is in the URL: /admin/orders/<strong>1234567890</strong></li>
           <li>Or use the order number without the # (e.g., "1001" instead of "#1001")</li>
         </ol>
         <p style={{ marginTop: "12px", marginBottom: "0" }}>
-          <strong>Required permissions:</strong> Your app needs <code>read_orders</code> access scope.
-        </p>
-        <p style={{ marginTop: "8px", marginBottom: "0" }}>
-          <strong>Note:</strong> This implementation uses the <code>gateway</code> field on transactions to identify gift_card and shopify_store_credit transactions.
+          <strong>This test will fetch ALL pricing fields</strong> to help determine the correct amount for cashback calculation.
         </p>
       </div>
       
@@ -372,48 +798,149 @@ export default function TestTransactions() {
             Order {actionData.orderName}
           </h2>
           
-          {/* Payment Breakdown */}
+          {/* ALL PRICING FIELDS COMPARISON */}
           <div style={{
-            backgroundColor: "#f5f5f5",
+            backgroundColor: "#fffbeb",
+            border: "1px solid #fbbf24",
             padding: "20px",
             borderRadius: "8px",
             marginBottom: "24px"
           }}>
-            <h3 style={{ fontSize: "16px", marginBottom: "16px" }}>Payment Breakdown</h3>
+            <h3 style={{ fontSize: "16px", marginBottom: "16px", color: "#92400e" }}>
+              📊 All Pricing Fields Comparison
+            </h3>
             
-            <div style={{ display: "grid", gap: "12px" }}>
+            <div style={{ display: "grid", gap: "8px", fontSize: "14px" }}>
+              <div style={{ fontWeight: "bold", borderBottom: "2px solid #fbbf24", paddingBottom: "8px" }}>
+                Main Totals:
+              </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>Order Total:</span>
-                <strong>{formatCurrency(actionData.analysis.orderTotal, actionData.analysis.currency)}</strong>
+                <span>totalPriceSet (before returns):</span>
+                <strong>{formatCurrency(actionData.analysis.allPricingFields.totalPriceSet, actionData.analysis.currency)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>currentTotalPriceSet (after returns):</span>
+                <strong>{formatCurrency(actionData.analysis.allPricingFields.currentTotalPriceSet, actionData.analysis.currency)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>originalTotalPriceSet (at creation):</span>
+                <strong>{formatCurrency(actionData.analysis.allPricingFields.originalTotalPriceSet, actionData.analysis.currency)}</strong>
               </div>
               
-              <div style={{ display: "flex", justifyContent: "space-between", color: "#666" }}>
-                <span>− Gift Cards:</span>
-                <span>{formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}</span>
+              <div style={{ fontWeight: "bold", borderBottom: "2px solid #fbbf24", paddingBottom: "8px", marginTop: "12px" }}>
+                Payment Fields:
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", backgroundColor: "#fef3c7", padding: "4px 8px", borderRadius: "4px" }}>
+                <span>totalReceivedSet (actual payment):</span>
+                <strong>{formatCurrency(actionData.analysis.allPricingFields.totalReceivedSet, actionData.analysis.currency)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", backgroundColor: "#fef3c7", padding: "4px 8px", borderRadius: "4px" }}>
+                <span>netPaymentSet (received - refunded):</span>
+                <strong>{formatCurrency(actionData.analysis.allPricingFields.netPaymentSet, actionData.analysis.currency)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>totalOutstandingSet:</span>
+                <strong>{formatCurrency(actionData.analysis.allPricingFields.totalOutstandingSet, actionData.analysis.currency)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>totalCapturableSet:</span>
+                <strong>{formatCurrency(actionData.analysis.allPricingFields.totalCapturableSet, actionData.analysis.currency)}</strong>
               </div>
               
-              <div style={{ display: "flex", justifyContent: "space-between", color: "#666" }}>
-                <span>− Store Credits:</span>
-                <span>{formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</span>
+              <div style={{ fontWeight: "bold", borderBottom: "2px solid #fbbf24", paddingBottom: "8px", marginTop: "12px" }}>
+                Other Fields:
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>subtotalPriceSet:</span>
+                <span>{formatCurrency(actionData.analysis.allPricingFields.subtotalPriceSet, actionData.analysis.currency)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>totalRefundedSet:</span>
+                <span>{formatCurrency(actionData.analysis.allPricingFields.totalRefundedSet, actionData.analysis.currency)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>totalDiscountsSet:</span>
+                <span>{formatCurrency(actionData.analysis.allPricingFields.totalDiscountsSet, actionData.analysis.currency)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>totalTaxSet:</span>
+                <span>{formatCurrency(actionData.analysis.allPricingFields.totalTaxSet, actionData.analysis.currency)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>totalShippingPriceSet:</span>
+                <span>{formatCurrency(actionData.analysis.allPricingFields.totalShippingPriceSet, actionData.analysis.currency)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>totalTipReceivedSet:</span>
+                <span>{formatCurrency(actionData.analysis.allPricingFields.totalTipReceivedSet, actionData.analysis.currency)}</span>
+              </div>
+            </div>
+          </div>
+          
+          {/* CASHBACK CALCULATION OPTIONS */}
+          <div style={{
+            backgroundColor: "#e0f2fe",
+            border: "1px solid #0284c7",
+            padding: "20px",
+            borderRadius: "8px",
+            marginBottom: "24px"
+          }}>
+            <h3 style={{ fontSize: "16px", marginBottom: "16px", color: "#075985" }}>
+              💰 Cashback Calculation Options
+            </h3>
+            
+            <div style={{ marginBottom: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                <span>Gift Cards Detected:</span>
+                <strong>{formatCurrency(actionData.analysis.giftCardAmount, actionData.analysis.currency)}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                <span>Store Credits Detected:</span>
+                <strong>{formatCurrency(actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</strong>
+              </div>
+            </div>
+            
+            <div style={{ display: "grid", gap: "12px", fontSize: "14px" }}>
+              <div style={{ padding: "12px", backgroundColor: "white", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                <div style={{ fontWeight: "bold", marginBottom: "4px" }}>Method 1: totalPriceSet - gift/credit</div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>{formatCurrency(actionData.analysis.allPricingFields.totalPriceSet, actionData.analysis.currency)} - {formatCurrency(actionData.analysis.giftCardAmount + actionData.analysis.storeCreditAmount, actionData.analysis.currency)} =</span>
+                  <strong>{formatCurrency(actionData.analysis.allPricingFields.totalPriceSet - actionData.analysis.giftCardAmount - actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</strong>
+                </div>
               </div>
               
-              <div style={{
-                display: "flex",
-                justifyContent: "space-between",
-                paddingTop: "12px",
-                borderTop: "1px solid #ddd",
-                fontWeight: "bold",
-                color: "#0070f3"
-              }}>
-                <span>= Cashback Eligible Amount:</span>
-                <span>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</span>
+              <div style={{ padding: "12px", backgroundColor: "#f0fdf4", borderRadius: "6px", border: "2px solid #22c55e" }}>
+                <div style={{ fontWeight: "bold", marginBottom: "4px", color: "#166534" }}>Method 2: totalReceivedSet - gift/credit (RECOMMENDED)</div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>{formatCurrency(actionData.analysis.allPricingFields.totalReceivedSet, actionData.analysis.currency)} - {formatCurrency(actionData.analysis.giftCardAmount + actionData.analysis.storeCreditAmount, actionData.analysis.currency)} =</span>
+                  <strong style={{ color: "#166534" }}>{formatCurrency(actionData.analysis.allPricingFields.totalReceivedSet - actionData.analysis.giftCardAmount - actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</strong>
+                </div>
+                <div style={{ fontSize: "12px", marginTop: "4px", color: "#166534" }}>
+                  ✓ Uses actual amount received from customer
+                </div>
+              </div>
+              
+              <div style={{ padding: "12px", backgroundColor: "white", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                <div style={{ fontWeight: "bold", marginBottom: "4px" }}>Method 3: netPaymentSet - gift/credit</div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>{formatCurrency(actionData.analysis.allPricingFields.netPaymentSet, actionData.analysis.currency)} - {formatCurrency(actionData.analysis.giftCardAmount + actionData.analysis.storeCreditAmount, actionData.analysis.currency)} =</span>
+                  <strong>{formatCurrency(actionData.analysis.allPricingFields.netPaymentSet - actionData.analysis.giftCardAmount - actionData.analysis.storeCreditAmount, actionData.analysis.currency)}</strong>
+                </div>
+              </div>
+              
+              <div style={{ padding: "12px", backgroundColor: "white", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                <div style={{ fontWeight: "bold", marginBottom: "4px" }}>Method 4: Sum of external payments only</div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>Direct calculation from transactions:</span>
+                  <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>
+                </div>
               </div>
             </div>
           </div>
           
           {/* Transaction Details */}
           <div style={{ marginBottom: "24px" }}>
-            <h3 style={{ fontSize: "16px", marginBottom: "12px" }}>Transactions</h3>
+            <h3 style={{ fontSize: "16px", marginBottom: "12px" }}>Transaction Details</h3>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #ddd" }}>
@@ -495,7 +1022,8 @@ export default function TestTransactions() {
                     border: "none",
                     borderRadius: "4px",
                     fontSize: "12px",
-                    cursor: "pointer"
+                    cursor: "pointer",
+                    zIndex: 10
                   }}
                 >
                   Copy
@@ -516,77 +1044,6 @@ export default function TestTransactions() {
             )}
           </div>
           
-          {/* Summary for Implementation */}
-          <div style={{
-            backgroundColor: "#e6f7ff",
-            border: "1px solid #91d5ff",
-            padding: "16px",
-            borderRadius: "6px",
-            marginTop: "24px"
-          }}>
-            <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
-            <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
-              For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>.
-              This amount represents the sum of all external payments (excluding transactions with gateway "gift_card" or "shopify_store_credit").
-            </p>
-          </div>
-          
-          {/* Additional Order Details from Raw Response */}
-          {actionData.rawResponse?.data?.order && (
-            <div style={{
-              backgroundColor: "#f0f4f8",
-              border: "1px solid #cbd5e0",
-              padding: "16px",
-              borderRadius: "6px",
-              marginTop: "16px"
-            }}>
-              <h4 style={{ margin: "0 0 12px 0", fontSize: "14px" }}>Additional Order Details</h4>
-              <div style={{ display: "grid", gap: "8px", fontSize: "14px" }}>
-                <div>
-                  <strong>Financial Status:</strong> {actionData.rawResponse.data.order.displayFinancialStatus}
-                </div>
-                <div>
-                  <strong>Fully Paid:</strong> {actionData.rawResponse.data.order.fullyPaid ? 'Yes' : 'No'}
-                </div>
-                <div>
-                  <strong>Refundable:</strong> {actionData.rawResponse.data.order.refundable ? 'Yes' : 'No'}
-                </div>
-                {actionData.rawResponse.data.order.subtotalPriceSet && (
-                  <div>
-                    <strong>Subtotal:</strong> {formatCurrency(
-                      parseFloat(actionData.rawResponse.data.order.subtotalPriceSet.shopMoney.amount),
-                      actionData.rawResponse.data.order.currencyCode
-                    )}
-                  </div>
-                )}
-                {actionData.rawResponse.data.order.totalDiscountsSet && (
-                  <div>
-                    <strong>Total Discounts:</strong> {formatCurrency(
-                      parseFloat(actionData.rawResponse.data.order.totalDiscountsSet.shopMoney.amount),
-                      actionData.rawResponse.data.order.currencyCode
-                    )}
-                  </div>
-                )}
-                {actionData.rawResponse.data.order.totalShippingPriceSet && (
-                  <div>
-                    <strong>Shipping:</strong> {formatCurrency(
-                      parseFloat(actionData.rawResponse.data.order.totalShippingPriceSet.shopMoney.amount),
-                      actionData.rawResponse.data.order.currencyCode
-                    )}
-                  </div>
-                )}
-                {actionData.rawResponse.data.order.totalTaxSet && (
-                  <div>
-                    <strong>Tax:</strong> {formatCurrency(
-                      parseFloat(actionData.rawResponse.data.order.totalTaxSet.shopMoney.amount),
-                      actionData.rawResponse.data.order.currencyCode
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          
           {/* Debug Info */}
           <div style={{
             backgroundColor: "#f9fafb",
@@ -598,6 +1055,10 @@ export default function TestTransactions() {
           }}>
             <p style={{ margin: "0", color: "#dc2626", fontWeight: "600" }}>
               💡 Check your browser console for detailed calculation logs!
+            </p>
+            <p style={{ margin: "8px 0 0 0" }}>
+              <strong>Recommendation:</strong> Use <code>totalReceivedSet</code> instead of <code>totalPriceSet</code> for cashback calculation, 
+              as it represents the actual amount received from the customer.
             </p>
           </div>
         </div>
