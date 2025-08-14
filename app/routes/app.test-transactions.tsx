@@ -25,6 +25,7 @@ type ActionResponse =
           status: string;
         }>;
       };
+      rawResponse: any; // Added to store the raw GraphQL response
       error?: never;
     };
 
@@ -73,7 +74,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   
   try {
-    // Updated query using the gateway field for transaction identification
+    // Enhanced query to get more payment details
     const query = `#graphql
       query GetOrderPaidAmount($id: ID!) {
         order(id: $id) {
@@ -89,8 +90,43 @@ export async function action({ request }: ActionFunctionArgs) {
             }
           }
           
+          # Subtotal (before discounts and shipping)
+          subtotalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Total discounts
+          totalDiscountsSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Tax amount
+          totalTaxSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          
+          # Shipping cost
+          totalShippingPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          
           # Payment gateway names (helpful for identification)
           paymentGatewayNames
+          
+          # Financial status
+          displayFinancialStatus
           
           # Transactions - using gateway field for identification
           transactions(first: 250) {
@@ -98,13 +134,24 @@ export async function action({ request }: ActionFunctionArgs) {
             gateway             # Payment gateway name (gift_card, shopify_store_credit, etc.)
             status              # SUCCESS, FAILED, etc.
             kind                # SALE, CAPTURE, REFUND, ...
+            test                # Is this a test transaction
+            errorCode           # Error code if failed
+            processedAt         # When it was processed
             amountSet {
               shopMoney { 
                 amount 
                 currencyCode
               }
             }
+            # Additional transaction details
+            parentTransaction {
+              id
+            }
           }
+          
+          # Additional payment info
+          refundable
+          fullyPaid
         }
       }
     `;
@@ -135,7 +182,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const order = result.data.order;
     const transactions = order.transactions || [];
     
-    // Calculate payment breakdown using the type field
+    // Calculate payment breakdown using the gateway field
     let giftCardAmount = 0;
     let storeCreditAmount = 0;
     
@@ -212,7 +259,8 @@ export async function action({ request }: ActionFunctionArgs) {
         cashbackEligibleAmount: externalPaymentAmount, // Using the direct sum method
         currency: order.currencyCode,
         transactions: processedTransactions
-      }
+      },
+      rawResponse: result // Include the raw GraphQL response
     });
     
   } catch (error) {
@@ -227,6 +275,7 @@ export default function TestTransactions() {
   const actionData = useActionData<ActionResponse>();
   const navigation = useNavigation();
   const [orderId, setOrderId] = useState("");
+  const [showRawResponse, setShowRawResponse] = useState(false);
   
   const isSubmitting = navigation.state === "submitting";
   
@@ -238,7 +287,7 @@ export default function TestTransactions() {
   };
   
   return (
-    <div style={{ maxWidth: "800px", margin: "0 auto", padding: "40px 20px" }}>
+    <div style={{ maxWidth: "900px", margin: "0 auto", padding: "40px 20px" }}>
       <h1 style={{ fontSize: "24px", marginBottom: "24px" }}>
         Cashback Transaction Test (Gateway-Based Method)
       </h1>
@@ -363,7 +412,7 @@ export default function TestTransactions() {
           </div>
           
           {/* Transaction Details */}
-          <div>
+          <div style={{ marginBottom: "24px" }}>
             <h3 style={{ fontSize: "16px", marginBottom: "12px" }}>Transactions</h3>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
@@ -403,6 +452,70 @@ export default function TestTransactions() {
             </table>
           </div>
           
+          {/* Raw GraphQL Response Section */}
+          <div style={{
+            backgroundColor: "#f9fafb",
+            border: "1px solid #e5e7eb",
+            padding: "16px",
+            borderRadius: "6px",
+            marginBottom: "24px"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <h3 style={{ fontSize: "16px", margin: 0 }}>Raw GraphQL Response</h3>
+              <button
+                onClick={() => setShowRawResponse(!showRawResponse)}
+                style={{
+                  padding: "6px 12px",
+                  backgroundColor: "#fff",
+                  color: "#0070f3",
+                  border: "1px solid #0070f3",
+                  borderRadius: "4px",
+                  fontSize: "14px",
+                  cursor: "pointer"
+                }}
+              >
+                {showRawResponse ? 'Hide' : 'Show'} Raw Response
+              </button>
+            </div>
+            
+            {showRawResponse && (
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(JSON.stringify(actionData.rawResponse, null, 2));
+                    alert('Copied to clipboard!');
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: "8px",
+                    right: "8px",
+                    padding: "4px 8px",
+                    backgroundColor: "#0070f3",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    fontSize: "12px",
+                    cursor: "pointer"
+                  }}
+                >
+                  Copy
+                </button>
+                <pre style={{
+                  backgroundColor: "#1f2937",
+                  color: "#e5e7eb",
+                  padding: "16px",
+                  borderRadius: "6px",
+                  overflow: "auto",
+                  maxHeight: "500px",
+                  fontSize: "13px",
+                  lineHeight: "1.5"
+                }}>
+                  {JSON.stringify(actionData.rawResponse, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+          
           {/* Summary for Implementation */}
           <div style={{
             backgroundColor: "#e6f7ff",
@@ -414,9 +527,65 @@ export default function TestTransactions() {
             <h4 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>Implementation Summary</h4>
             <p style={{ margin: "0", fontSize: "14px", lineHeight: "1.5" }}>
               For this order, cashback should be calculated on <strong>{formatCurrency(actionData.analysis.cashbackEligibleAmount, actionData.analysis.currency)}</strong>.
-              This amount represents the sum of all external payments (excluding transactions with type GIFT_CARD or STORE_CREDIT).
+              This amount represents the sum of all external payments (excluding transactions with gateway "gift_card" or "shopify_store_credit").
             </p>
           </div>
+          
+          {/* Additional Order Details from Raw Response */}
+          {actionData.rawResponse?.data?.order && (
+            <div style={{
+              backgroundColor: "#f0f4f8",
+              border: "1px solid #cbd5e0",
+              padding: "16px",
+              borderRadius: "6px",
+              marginTop: "16px"
+            }}>
+              <h4 style={{ margin: "0 0 12px 0", fontSize: "14px" }}>Additional Order Details</h4>
+              <div style={{ display: "grid", gap: "8px", fontSize: "14px" }}>
+                <div>
+                  <strong>Financial Status:</strong> {actionData.rawResponse.data.order.displayFinancialStatus}
+                </div>
+                <div>
+                  <strong>Fully Paid:</strong> {actionData.rawResponse.data.order.fullyPaid ? 'Yes' : 'No'}
+                </div>
+                <div>
+                  <strong>Refundable:</strong> {actionData.rawResponse.data.order.refundable ? 'Yes' : 'No'}
+                </div>
+                {actionData.rawResponse.data.order.subtotalPriceSet && (
+                  <div>
+                    <strong>Subtotal:</strong> {formatCurrency(
+                      parseFloat(actionData.rawResponse.data.order.subtotalPriceSet.shopMoney.amount),
+                      actionData.rawResponse.data.order.currencyCode
+                    )}
+                  </div>
+                )}
+                {actionData.rawResponse.data.order.totalDiscountsSet && (
+                  <div>
+                    <strong>Total Discounts:</strong> {formatCurrency(
+                      parseFloat(actionData.rawResponse.data.order.totalDiscountsSet.shopMoney.amount),
+                      actionData.rawResponse.data.order.currencyCode
+                    )}
+                  </div>
+                )}
+                {actionData.rawResponse.data.order.totalShippingPriceSet && (
+                  <div>
+                    <strong>Shipping:</strong> {formatCurrency(
+                      parseFloat(actionData.rawResponse.data.order.totalShippingPriceSet.shopMoney.amount),
+                      actionData.rawResponse.data.order.currencyCode
+                    )}
+                  </div>
+                )}
+                {actionData.rawResponse.data.order.totalTaxSet && (
+                  <div>
+                    <strong>Tax:</strong> {formatCurrency(
+                      parseFloat(actionData.rawResponse.data.order.totalTaxSet.shopMoney.amount),
+                      actionData.rawResponse.data.order.currencyCode
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           
           {/* Debug Info */}
           <div style={{
