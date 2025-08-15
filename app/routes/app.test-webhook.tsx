@@ -1,9 +1,10 @@
 // app/routes/app.test-webhook.tsx
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Form, useActionData, useNavigation, useSubmit } from "@remix-run/react";
+import { useLoaderData, Form, useActionData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { useState } from "react";
 import db from "../db.server";
+import { evaluateCustomerTier, assignInitialTier, getCustomerTierInfo } from "../services/customer-tier.server";
 
 type TestScenario = {
   name: string;
@@ -16,8 +17,10 @@ type ActionResponse =
   | { 
       success: true;
       scenario: string;
-      webhookResponse: any;
-      databaseCheck: {
+      results: {
+        expectedCashback: number;
+        actualCashback: number;
+        eligibleAmount: number;
         customer: any;
         transaction: any;
       };
@@ -202,12 +205,59 @@ const TEST_SCENARIOS: TestScenario[] = [
   }
 ];
 
+// Helper function to calculate cashback eligible amount (duplicated from webhook)
+function calculateCashbackEligibleAmount(transactions: any[]): number {
+  let giftCardAmount = 0;
+  let storeCreditAmount = 0;
+  let externalPaymentAmount = 0;
+  
+  // Process only successful SALE or CAPTURE transactions
+  const processedTransactions = transactions
+    .filter((tx: any) => {
+      const isSuccessful = tx.status === 'SUCCESS';
+      const isSaleOrCapture = ['SALE', 'CAPTURE'].includes(tx.kind);
+      return isSuccessful && isSaleOrCapture;
+    })
+    .filter((tx: any) => {
+      // For CAPTURE transactions, check if we already processed the AUTHORIZATION
+      if (tx.kind === 'CAPTURE' && tx.parentTransaction) {
+        // Skip if the parent AUTHORIZATION was already counted
+        const parentAuth = transactions.find(
+          (t: any) => t.id === tx.parentTransaction.id && t.kind === 'AUTHORIZATION'
+        );
+        if (parentAuth) {
+          // We'll process the CAPTURE instead of the AUTH
+          return true;
+        }
+      }
+      // For SALE transactions or CAPTURE without AUTH, include them
+      return tx.kind === 'SALE' || tx.kind === 'CAPTURE';
+    });
+  
+  // Group transactions by gateway and sum amounts
+  processedTransactions.forEach((tx: any) => {
+    const amount = parseFloat(tx.amount);
+    const gateway = tx.gateway.toLowerCase();
+    
+    if (gateway === 'gift_card' || gateway.includes('gift_card')) {
+      giftCardAmount += amount;
+    } else if (gateway === 'shopify_store_credit' || gateway.includes('store_credit')) {
+      storeCreditAmount += amount;
+    } else {
+      externalPaymentAmount += amount;
+    }
+  });
+  
+  return externalPaymentAmount;
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   
   // Get recent test transactions from database for verification
   const recentTransactions = await db.cashbackTransaction.findMany({
     where: {
+      shopDomain: session.shop,
       shopifyOrderId: {
         startsWith: "TEST-ORDER"
       }
@@ -223,7 +273,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   
   return json({ 
     scenarios: TEST_SCENARIOS,
-    recentTransactions 
+    recentTransactions,
+    shop: session.shop
   });
 }
 
@@ -239,6 +290,7 @@ export async function action({ request }: ActionFunctionArgs) {
       // Delete test transactions
       await db.cashbackTransaction.deleteMany({
         where: {
+          shopDomain: session.shop,
           shopifyOrderId: {
             startsWith: "TEST-ORDER"
           }
@@ -248,6 +300,7 @@ export async function action({ request }: ActionFunctionArgs) {
       // Delete test customers
       await db.customer.deleteMany({
         where: {
+          shopDomain: session.shop,
           shopifyCustomerId: {
             startsWith: "TEST-CUSTOMER"
           }
@@ -260,7 +313,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
   
-  // Run test scenario
+  // Run test scenario - simulate webhook logic directly
   const scenarioIndex = parseInt(formData.get("scenarioIndex") as string);
   const scenario = TEST_SCENARIOS[scenarioIndex];
   
@@ -271,143 +324,139 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     console.log(`\n=== RUNNING TEST SCENARIO: ${scenario.name} ===`);
     
-    // Create a mock GraphQL client that returns our test data
-    const mockAdmin = {
-      graphql: async (query: string, options?: any) => {
-        // Mock the order query response
-        if (query.includes("GetOrderPaymentDetails")) {
-          const orderId = scenario.orderData.id;
-          return {
-            json: async () => ({
-              data: {
-                order: {
-                  id: `gid://shopify/Order/${orderId}`,
-                  totalReceivedSet: {
-                    shopMoney: {
-                      amount: scenario.orderData.total_price,
-                      currencyCode: scenario.orderData.currency
-                    }
-                  },
-                  transactions: scenario.orderData.transactions.map((tx: any, index: number) => ({
-                    id: `gid://shopify/OrderTransaction/${orderId}-${index}`,
-                    gateway: tx.gateway,
-                    status: tx.status,
-                    kind: tx.kind,
-                    amountSet: {
-                      shopMoney: {
-                        amount: tx.amount,
-                        currencyCode: scenario.orderData.currency
-                      }
-                    },
-                    parentTransaction: tx.parentTransaction || null
-                  }))
-                }
-              }
-            })
-          };
+    const order = scenario.orderData;
+    const customerId = order.customer.id;
+    const customerEmail = order.customer.email;
+    const orderId = order.id;
+    const currency = order.currency || "GBP";
+    
+    // Calculate eligible amount based on transactions
+    const cashbackEligibleAmount = calculateCashbackEligibleAmount(order.transactions || []);
+    
+    console.log(`Cashback Eligible Amount: ${cashbackEligibleAmount}`);
+    
+    // Skip if no eligible amount
+    if (cashbackEligibleAmount <= 0) {
+      console.log("No cashback eligible amount");
+      
+      return json<ActionResponse>({
+        success: true,
+        scenario: scenario.name,
+        results: {
+          expectedCashback: 0,
+          actualCashback: 0,
+          eligibleAmount: 0,
+          customer: null,
+          transaction: null
         }
-        
-        // Mock customer update (for tags)
-        if (query.includes("customerUpdate")) {
-          return {
-            json: async () => ({
-              data: {
-                customerUpdate: {
-                  customer: { id: "mock", tags: [] },
-                  userErrors: []
-                }
-              }
-            })
-          };
-        }
-        
-        // Mock store credit issuance
-        if (query.includes("storeCreditAccountCredit")) {
-          return {
-            json: async () => ({
-              data: {
-                storeCreditAccountCredit: {
-                  storeCreditAccountTransaction: {
-                    id: `gid://shopify/StoreCreditTransaction/MOCK-${Date.now()}`,
-                    amount: { amount: "0.00", currencyCode: "GBP" },
-                    balanceAfterTransaction: { amount: "0.00", currencyCode: "GBP" },
-                    account: { id: "mock", balance: { amount: "0.00", currencyCode: "GBP" } }
-                  },
-                  userErrors: []
-                }
-              }
-            })
-          };
-        }
-        
-        return { json: async () => ({ data: null }) };
-      }
-    };
+      });
+    }
     
-    // Import and call the webhook action directly
-    const { action: webhookAction } = await import("./webhooks.orders.paid");
-    
-    // Create a mock request for the webhook
-    const webhookRequest = new Request("https://test.com/webhooks/orders/paid", {
-      method: "POST",
-      headers: {
-        "X-Shopify-Topic": "orders/paid",
-        "X-Shopify-Shop-Domain": session.shop,
-        "X-Shopify-Webhook-Id": `test-${Date.now()}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(scenario.orderData)
-    });
-    
-    // Mock the authenticate.webhook function
-    const originalAuth = require("../shopify.server").authenticate;
-    require("../shopify.server").authenticate = {
-      webhook: async () => ({
-        topic: "orders/paid",
-        shop: session.shop,
-        payload: scenario.orderData,
-        admin: mockAdmin
-      })
-    };
-    
-    // Execute the webhook
-    const webhookResponse = await webhookAction({ 
-      request: webhookRequest,
-      params: {},
-      context: {}
-    } as ActionFunctionArgs);
-    
-    // Restore original authenticate
-    require("../shopify.server").authenticate = originalAuth;
-    
-    // Check the database for the created records
-    const customer = await db.customer.findUnique({
-      where: {
+    // Find or create customer
+    let customer = await db.customer.findUnique({
+      where: { 
         shopDomain_shopifyCustomerId: {
           shopDomain: session.shop,
-          shopifyCustomerId: scenario.orderData.customer.id
+          shopifyCustomerId: customerId
         }
       }
     });
     
-    const transaction = await db.cashbackTransaction.findUnique({
-      where: {
+    let isNewCustomer = false;
+    if (!customer) {
+      console.log(`Creating new test customer: ${customerEmail}`);
+      customer = await db.customer.create({
+        data: {
+          shopDomain: session.shop,
+          shopifyCustomerId: customerId,
+          email: customerEmail,
+          storeCredit: 0,
+          totalEarned: 0
+        }
+      });
+      isNewCustomer = true;
+    }
+    
+    // Check if we already processed this order
+    const existingTransaction = await db.cashbackTransaction.findUnique({
+      where: { 
         shopDomain_shopifyOrderId: {
           shopDomain: session.shop,
-          shopifyOrderId: scenario.orderData.id
+          shopifyOrderId: orderId
         }
       }
     });
+    
+    if (existingTransaction) {
+      // Delete it for testing purposes
+      await db.cashbackTransaction.delete({
+        where: { id: existingTransaction.id }
+      });
+      console.log("Deleted existing transaction for re-testing");
+    }
+    
+    // Assign initial tier to new customers
+    if (isNewCustomer) {
+      console.log("Assigning initial tier to new customer...");
+      await assignInitialTier(customer.id, session.shop);
+    }
+    
+    // Get customer's current tier for cashback calculation
+    const tierInfo = await getCustomerTierInfo(customer.id, session.shop);
+    const cashbackPercent = tierInfo?.membership.tier.cashbackPercent || 1; // Default 1% if no tier
+    const cashbackAmount = cashbackEligibleAmount * (cashbackPercent / 100);
+    
+    console.log(`Cashback Calculation:`);
+    console.log(`  Tier: ${tierInfo?.membership.tier.name || 'None'}`);
+    console.log(`  Rate: ${cashbackPercent}%`);
+    console.log(`  Amount: ${cashbackAmount.toFixed(2)} ${currency}`);
+    
+    // Create transaction and update customer balance
+    const [transaction, updatedCustomer] = await db.$transaction([
+      // Create cashback transaction record
+      db.cashbackTransaction.create({
+        data: {
+          shopDomain: session.shop,
+          customerId: customer.id,
+          shopifyOrderId: orderId,
+          orderAmount: cashbackEligibleAmount,
+          cashbackAmount,
+          cashbackPercent: cashbackPercent,
+          status: "COMPLETED" // Use valid status from enum
+        }
+      }),
+      // Update customer balance
+      db.customer.update({
+        where: { id: customer.id },
+        data: {
+          storeCredit: { increment: cashbackAmount },
+          totalEarned: { increment: cashbackAmount }
+        }
+      })
+    ]);
+    
+    console.log(`✅ Test cashback credited!`);
+    console.log(`   Transaction ID: ${transaction.id}`);
+    console.log(`   Customer: ${customerEmail}`);
+    console.log(`   Cashback: ${cashbackAmount.toFixed(2)} ${currency}`);
+    
+    // Evaluate tier upgrade
+    const updatedMembership = await evaluateCustomerTier(customer.id, session.shop);
+    
+    if (updatedMembership && tierInfo && tierInfo.membership.tierId !== updatedMembership.tierId) {
+      console.log(`🎉 Customer tier would be upgraded!`);
+      console.log(`   From: ${tierInfo.membership.tier.name}`);
+      console.log(`   To: ${updatedMembership.tier.name}`);
+    }
     
     return json<ActionResponse>({
       success: true,
       scenario: scenario.name,
-      webhookResponse: {
-        status: webhookResponse.status,
-        statusText: webhookResponse.statusText
-      },
-      databaseCheck: {
-        customer,
+      results: {
+        expectedCashback: cashbackEligibleAmount * (cashbackPercent / 100),
+        actualCashback: cashbackAmount,
+        eligibleAmount: cashbackEligibleAmount,
+        customer: updatedCustomer,
         transaction
       }
     });
@@ -424,7 +473,6 @@ export default function TestWebhook() {
   const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<ActionResponse>();
   const navigation = useNavigation();
-  const submit = useSubmit();
   const [selectedScenario, setSelectedScenario] = useState<number>(0);
   
   // Type-safe access to scenarios and transactions
@@ -443,22 +491,8 @@ export default function TestWebhook() {
   const calculateExpectedCashback = (scenario: typeof scenarios[0]) => {
     if (!scenario.orderData) return 0;
     
-    const totalPrice = parseFloat(scenario.orderData.total_price || "0");
-    let eligibleAmount = totalPrice;
-    
-    // Subtract gift cards
-    if (scenario.orderData.total_gift_cards_amount) {
-      eligibleAmount -= parseFloat(scenario.orderData.total_gift_cards_amount);
-    }
-    
-    // Subtract store credit from transactions
-    scenario.orderData.transactions?.forEach((tx: any) => {
-      if (tx.gateway === "shopify_store_credit" && tx.status === "SUCCESS") {
-        eligibleAmount -= parseFloat(tx.amount);
-      }
-    });
-    
-    return Math.max(0, eligibleAmount);
+    const eligibleAmount = calculateCashbackEligibleAmount(scenario.orderData.transactions || []);
+    return eligibleAmount * 0.01; // 1% default rate
   };
   
   return (
@@ -476,10 +510,13 @@ export default function TestWebhook() {
         marginBottom: "24px",
         fontSize: "14px"
       }}>
-        <strong>🧪 Test Your Webhook Logic</strong>
-        <p style={{ marginTop: "8px", marginBottom: "0" }}>
-          This page allows you to test your webhook with various payment scenarios without creating real orders.
-          Each scenario simulates different payment method combinations to ensure cashback is calculated correctly.
+        <strong>🧪 Test Your Cashback Calculations</strong>
+        <p style={{ marginTop: "8px", marginBottom: "8px" }}>
+          This page simulates the webhook logic directly without making actual webhook calls.
+          It creates test transactions in your database to verify cashback calculations are correct.
+        </p>
+        <p style={{ margin: "0", color: "#0c4a6e" }}>
+          <strong>Note:</strong> Test data is prefixed with "TEST-" and can be cleaned up using the cleanup button.
         </p>
       </div>
       
@@ -492,6 +529,7 @@ export default function TestWebhook() {
             if (!scenario.orderData) return null;
             
             const expectedCashback = calculateExpectedCashback(scenario);
+            const eligibleAmount = calculateCashbackEligibleAmount(scenario.orderData.transactions || []);
             const isSelected = selectedScenario === index;
             
             return (
@@ -521,12 +559,12 @@ export default function TestWebhook() {
                     </div>
                   </div>
                   <div style={{ textAlign: "right", minWidth: "150px" }}>
-                    <div style={{ fontSize: "14px", color: "#666" }}>Expected Cashback on:</div>
-                    <div style={{ fontSize: "18px", fontWeight: "600", color: expectedCashback > 0 ? "#059669" : "#dc2626" }}>
-                      {formatCurrency(expectedCashback)}
+                    <div style={{ fontSize: "14px", color: "#666" }}>Eligible Amount:</div>
+                    <div style={{ fontSize: "18px", fontWeight: "600", color: eligibleAmount > 0 ? "#059669" : "#dc2626" }}>
+                      {formatCurrency(eligibleAmount)}
                     </div>
                     <div style={{ fontSize: "12px", color: "#666" }}>
-                      (1% = {formatCurrency(expectedCashback * 0.01)})
+                      Expected: {formatCurrency(expectedCashback)}
                     </div>
                   </div>
                 </div>
@@ -571,44 +609,66 @@ export default function TestWebhook() {
       {/* Test Results */}
       {actionData && 'success' in actionData && (
         <div style={{
-          backgroundColor: "#f0fdf4",
-          border: "1px solid #22c55e",
+          backgroundColor: actionData.results.actualCashback > 0 ? "#f0fdf4" : "#fef3c7",
+          border: `1px solid ${actionData.results.actualCashback > 0 ? "#22c55e" : "#fbbf24"}`,
           padding: "20px",
           borderRadius: "8px",
           marginBottom: "24px"
         }}>
-          <h3 style={{ margin: "0 0 16px 0", color: "#166534" }}>
-            ✅ Test Completed: {actionData.scenario}
+          <h3 style={{ margin: "0 0 16px 0", color: actionData.results.actualCashback > 0 ? "#166534" : "#92400e" }}>
+            {actionData.results.actualCashback > 0 ? "✅" : "⚠️"} Test Completed: {actionData.scenario}
           </h3>
           
           <div style={{ display: "grid", gap: "16px" }}>
             <div>
-              <h4 style={{ fontSize: "14px", fontWeight: "600", marginBottom: "8px" }}>Webhook Response:</h4>
-              <div style={{ fontSize: "14px", padding: "8px", backgroundColor: "white", borderRadius: "4px" }}>
-                Status: {actionData.webhookResponse.status} {actionData.webhookResponse.statusText}
+              <h4 style={{ fontSize: "14px", fontWeight: "600", marginBottom: "8px" }}>Calculation Results:</h4>
+              <div style={{ fontSize: "14px", padding: "12px", backgroundColor: "white", borderRadius: "4px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                  <span>Eligible Amount:</span>
+                  <strong>{formatCurrency(actionData.results.eligibleAmount)}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                  <span>Expected Cashback (1%):</span>
+                  <span>{formatCurrency(actionData.results.expectedCashback)}</span>
+                </div>
+                <div style={{ 
+                  display: "flex", 
+                  justifyContent: "space-between", 
+                  paddingTop: "8px", 
+                  borderTop: "1px solid #e5e7eb",
+                  fontWeight: "600",
+                  color: "#059669"
+                }}>
+                  <span>Actual Cashback:</span>
+                  <span>{formatCurrency(actionData.results.actualCashback)}</span>
+                </div>
+                {Math.abs(actionData.results.expectedCashback - actionData.results.actualCashback) > 0.01 && (
+                  <div style={{ marginTop: "8px", padding: "8px", backgroundColor: "#fef3c7", borderRadius: "4px", fontSize: "12px" }}>
+                    ⚠️ Difference detected - may be due to tier-based rates
+                  </div>
+                )}
               </div>
             </div>
             
-            {actionData.databaseCheck.transaction && (
+            {actionData.results.transaction && (
               <div>
                 <h4 style={{ fontSize: "14px", fontWeight: "600", marginBottom: "8px" }}>Transaction Created:</h4>
-                <div style={{ fontSize: "14px", padding: "8px", backgroundColor: "white", borderRadius: "4px" }}>
-                  <div>Order Amount: {formatCurrency(actionData.databaseCheck.transaction.orderAmount)}</div>
-                  <div>Cashback Rate: {actionData.databaseCheck.transaction.cashbackPercent}%</div>
-                  <div style={{ fontWeight: "600", color: "#059669" }}>
-                    Cashback Amount: {formatCurrency(actionData.databaseCheck.transaction.cashbackAmount)}
-                  </div>
-                  <div>Status: {actionData.databaseCheck.transaction.status}</div>
+                <div style={{ fontSize: "14px", padding: "12px", backgroundColor: "white", borderRadius: "4px" }}>
+                  <div>Transaction ID: {actionData.results.transaction.id}</div>
+                  <div>Order Amount: {formatCurrency(actionData.results.transaction.orderAmount)}</div>
+                  <div>Cashback Rate: {actionData.results.transaction.cashbackPercent}%</div>
+                  <div>Status: {actionData.results.transaction.status}</div>
                 </div>
               </div>
             )}
             
-            {actionData.databaseCheck.customer && (
+            {actionData.results.customer && (
               <div>
-                <h4 style={{ fontSize: "14px", fontWeight: "600", marginBottom: "8px" }}>Customer Balance:</h4>
-                <div style={{ fontSize: "14px", padding: "8px", backgroundColor: "white", borderRadius: "4px" }}>
-                  <div>Store Credit: {formatCurrency(actionData.databaseCheck.customer.storeCredit)}</div>
-                  <div>Total Earned: {formatCurrency(actionData.databaseCheck.customer.totalEarned)}</div>
+                <h4 style={{ fontSize: "14px", fontWeight: "600", marginBottom: "8px" }}>Customer Balance Updated:</h4>
+                <div style={{ fontSize: "14px", padding: "12px", backgroundColor: "white", borderRadius: "4px" }}>
+                  <div>Customer: {actionData.results.customer.email}</div>
+                  <div>Store Credit Balance: {formatCurrency(actionData.results.customer.storeCredit)}</div>
+                  <div>Total Earned: {formatCurrency(actionData.results.customer.totalEarned)}</div>
                 </div>
               </div>
             )}
@@ -662,10 +722,10 @@ export default function TestWebhook() {
               <tr style={{ borderBottom: "2px solid #ddd" }}>
                 <th style={{ padding: "8px", textAlign: "left" }}>Order ID</th>
                 <th style={{ padding: "8px", textAlign: "left" }}>Customer</th>
-                <th style={{ padding: "8px", textAlign: "right" }}>Order Amount</th>
+                <th style={{ padding: "8px", textAlign: "right" }}>Eligible Amount</th>
+                <th style={{ padding: "8px", textAlign: "center" }}>Rate</th>
                 <th style={{ padding: "8px", textAlign: "right" }}>Cashback</th>
                 <th style={{ padding: "8px", textAlign: "left" }}>Status</th>
-                <th style={{ padding: "8px", textAlign: "left" }}>Created</th>
               </tr>
             </thead>
             <tbody>
@@ -676,6 +736,9 @@ export default function TestWebhook() {
                   <td style={{ padding: "8px", textAlign: "right", fontSize: "14px" }}>
                     {formatCurrency(tx.orderAmount)}
                   </td>
+                  <td style={{ padding: "8px", textAlign: "center", fontSize: "14px" }}>
+                    {tx.cashbackPercent}%
+                  </td>
                   <td style={{ padding: "8px", textAlign: "right", fontSize: "14px", fontWeight: "600", color: "#059669" }}>
                     {formatCurrency(tx.cashbackAmount)}
                   </td>
@@ -684,14 +747,11 @@ export default function TestWebhook() {
                       padding: "2px 6px",
                       borderRadius: "4px",
                       fontSize: "12px",
-                      backgroundColor: tx.status === "SYNCED_TO_SHOPIFY" ? "#d1fae5" : "#fef3c7",
-                      color: tx.status === "SYNCED_TO_SHOPIFY" ? "#065f46" : "#92400e"
+                      backgroundColor: "#e0f2fe",
+                      color: "#075985"
                     }}>
                       {tx.status}
                     </span>
-                  </td>
-                  <td style={{ padding: "8px", fontSize: "14px" }}>
-                    {new Date(tx.createdAt).toLocaleString()}
                   </td>
                 </tr>
               ))}
