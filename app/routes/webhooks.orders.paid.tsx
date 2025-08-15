@@ -148,14 +148,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Initial order amount from webhook (this includes gift cards/store credit)
     const webhookOrderAmount = parseFloat(order.total_price || "0");
     
-    console.log(`Initial Order Details from Webhook:`);
+    console.log(`Order Financial Details:`);
+    console.log(`  Subtotal: ${order.subtotal_price} ${currency}`);
+    console.log(`  Total Discounts: ${order.total_discounts} ${currency}`);
+    console.log(`  Total Price (from webhook): ${order.total_price} ${currency}`);
+    console.log(`  Financial Status: ${order.financial_status}`);
+    console.log(`  Test Order: ${order.test}`);
+    
+    console.log(`Order Details:`);
     console.log(`  Order ID: ${orderId}`);
     console.log(`  Customer: ${customerEmail} (${customerId})`);
-    console.log(`  Total Price (from webhook): ${webhookOrderAmount} ${currency}`);
-    console.log(`  Financial Status: ${order.financial_status}`);
     
-    // IMPORTANT: Fetch detailed payment information via GraphQL
-    let cashbackEligibleAmount = webhookOrderAmount; // Default to webhook amount
+    // IMPORTANT: Fetch detailed payment information via GraphQL to exclude gift cards/store credit
+    let cashbackEligibleAmount = webhookOrderAmount; // Default fallback
     
     if (admin) {
       console.log("\nFetching detailed payment information via GraphQL...");
@@ -199,6 +204,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
     
+    console.log(`\n💰 Final Cashback Eligible Amount: ${cashbackEligibleAmount.toFixed(2)} ${currency}`);
+    
     // Validate cashback eligible amount
     if (cashbackEligibleAmount <= 0) {
       console.log("No cashback eligible amount (order paid entirely with gift cards/store credit)");
@@ -217,7 +224,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     
     let isNewCustomer = false;
     if (!customer) {
-      console.log(`\nCreating new customer: ${customerEmail}`);
+      console.log(`Creating new customer: ${customerEmail}`);
       customer = await db.customer.create({
         data: {
           shopDomain: shop,
@@ -229,7 +236,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       isNewCustomer = true;
     } else {
-      console.log(`\nFound existing customer: ${customerEmail} (DB ID: ${customer.id})`);
+      console.log(`Found existing customer: ${customerEmail} (DB ID: ${customer.id})`);
     }
     
     // Check if we already processed this order
@@ -258,13 +265,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const cashbackPercent = tierInfo?.membership.tier.cashbackPercent || 1; // Default 1% if no tier
     const cashbackAmount = cashbackEligibleAmount * (cashbackPercent / 100);
     
-    console.log(`\n💰 Cashback Calculation:`);
+    console.log(`Tier Information:`);
     console.log(`  Current Tier: ${tierInfo?.membership.tier.name || 'None'}`);
     console.log(`  Cashback Rate: ${cashbackPercent}%`);
-    console.log(`  Cashback Eligible Amount: ${cashbackEligibleAmount.toFixed(2)} ${currency}`);
     console.log(`  Cashback Amount: ${cashbackAmount.toFixed(2)} ${currency}`);
     
-    console.log("\nProcessing cashback transaction...");
+    console.log("Processing cashback transaction...");
     
     // Create transaction and update customer balance in a database transaction
     const [transaction, updatedCustomer] = await db.$transaction([
@@ -276,7 +282,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           shopifyOrderId: orderId,
           orderAmount: cashbackEligibleAmount, // Store the eligible amount, not the total
           cashbackAmount,
-          cashbackPercent: cashbackPercent,
+          cashbackPercent: cashbackPercent, // Now using tier-based percentage
           status: "COMPLETED"
         }
       }),
@@ -290,7 +296,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       })
     ]);
     
-    console.log(`\n✅ Cashback credited in database!`);
+    console.log(`✅ Cashback credited in database!`);
     console.log(`   Transaction ID: ${transaction.id}`);
     console.log(`   Customer: ${customerEmail}`);
     console.log(`   Previous balance: ${(updatedCustomer.storeCredit - cashbackAmount).toFixed(2)} ${currency}`);
@@ -299,7 +305,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log(`   Total earned to date: ${updatedCustomer.totalEarned.toFixed(2)} ${currency}`);
     
     // TIER INTEGRATION: Evaluate if customer qualifies for tier upgrade
-    console.log("\nEvaluating tier qualification...");
+    console.log("Evaluating tier qualification...");
     const previousTierId = tierInfo?.membership.tierId;
     const updatedMembership = await evaluateCustomerTier(customer.id, shop);
     
@@ -348,9 +354,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
     
-    // Issue store credit in Shopify
+    // Issue store credit in Shopify (EXACT SAME METHOD AS OLD WEBHOOK)
     if (admin) {
-      console.log("\nAttempting to issue store credit in Shopify...");
+      console.log("Attempting to issue store credit in Shopify...");
       
       try {
         const response = await admin.graphql(
@@ -452,7 +458,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       console.warn("⚠️ Admin GraphQL client not available");
     }
     
-    console.log("\n=== WEBHOOK PROCESSING COMPLETE ===");
+    console.log("=== WEBHOOK PROCESSING COMPLETE ===");
     return new Response("OK", { status: 200 });
     
   } catch (error) {
