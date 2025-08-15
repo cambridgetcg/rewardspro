@@ -4,6 +4,17 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { evaluateCustomerTier, assignInitialTier, getCustomerTierInfo } from "../services/customer-tier.server";
 
+// Helper function to round down to 2 decimal places
+function roundDownToHundredths(value: number): number {
+  return Math.floor(value * 100) / 100;
+}
+
+// Helper function to format currency value for Shopify (exactly 2 decimal places)
+function formatForShopify(value: number): string {
+  const rounded = roundDownToHundredths(value);
+  return rounded.toFixed(2);
+}
+
 // Helper function to get detailed order payment information via GraphQL
 async function getOrderPaymentDetails(admin: any, orderId: string) {
   const query = `#graphql
@@ -263,12 +274,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // TIER INTEGRATION: Get customer's current tier for cashback calculation
     const tierInfo = await getCustomerTierInfo(customer.id, shop);
     const cashbackPercent = tierInfo?.membership.tier.cashbackPercent || 1; // Default 1% if no tier
-    const cashbackAmount = cashbackEligibleAmount * (cashbackPercent / 100);
+    
+    // Calculate raw cashback amount
+    const rawCashbackAmount = cashbackEligibleAmount * (cashbackPercent / 100);
+    
+    // Round down to nearest hundredths (2 decimal places)
+    const cashbackAmount = roundDownToHundredths(rawCashbackAmount);
     
     console.log(`Tier Information:`);
     console.log(`  Current Tier: ${tierInfo?.membership.tier.name || 'None'}`);
     console.log(`  Cashback Rate: ${cashbackPercent}%`);
-    console.log(`  Cashback Amount: ${cashbackAmount.toFixed(2)} ${currency}`);
+    console.log(`  Raw Cashback Amount: ${rawCashbackAmount} ${currency}`);
+    console.log(`  Rounded Down Cashback Amount: ${cashbackAmount} ${currency}`);
     
     console.log("Processing cashback transaction...");
     
@@ -358,11 +375,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (admin) {
       console.log("Attempting to issue store credit in Shopify...");
       
+      // Format the cashback amount for Shopify (exactly 2 decimal places)
+      const formattedCashbackAmount = formatForShopify(cashbackAmount);
+      
       // Debug logging
       console.log("=== STORE CREDIT DEBUG ===");
       console.log("  Customer ID:", customerId);
       console.log("  Customer GID:", `gid://shopify/Customer/${customerId}`);
-      console.log("  Amount to credit:", cashbackAmount.toFixed(2));
+      console.log("  Raw Cashback Amount:", rawCashbackAmount);
+      console.log("  Rounded Down Amount:", cashbackAmount);
+      console.log("  Formatted for Shopify:", formattedCashbackAmount);
       console.log("  Currency:", currency);
       console.log("  Admin context available:", !!admin);
       
@@ -394,7 +416,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               id: `gid://shopify/Customer/${customerId}`,
               creditInput: {
                 creditAmount: {
-                  amount: cashbackAmount.toFixed(2),
+                  amount: formattedCashbackAmount, // Use the properly formatted amount
                   currencyCode: currency
                 }
               }
