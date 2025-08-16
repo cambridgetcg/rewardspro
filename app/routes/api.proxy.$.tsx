@@ -1,278 +1,244 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
+import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import crypto from "crypto";
 import prisma from "../db.server";
+import { AssignmentType, TierChangeType } from "@prisma/client";
 
-export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+function validateProxySignature(
+  queryParams: URLSearchParams,
+  secret: string
+): boolean {
+  const signature = queryParams.get("signature");
+  if (!signature) return false;
+
+  const paramsToValidate = new URLSearchParams(queryParams);
+  paramsToValidate.delete("signature");
+  
+  const sortedParams = Array.from(paramsToValidate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("");
+
+  const calculatedSignature = crypto
+    .createHmac("sha256", secret)
+    .update(sortedParams)
+    .digest("hex");
+
+  return crypto.timingSafeEqual(
+    Buffer.from(calculatedSignature),
+    Buffer.from(signature)
+  );
+}
+
+export async function loader({ request, params }: LoaderFunctionArgs) {
+  console.log("\n=== PROXY REQUEST START ===");
+  
+  // Get the path after /api/proxy/
+  const proxyPath = params["*"] || "";
+  console.log("[Debug] Proxy path:", proxyPath);
+  console.log("[Debug] Full URL:", request.url);
+  
   try {
-    // Get the path after /api/proxy/ (e.g., "membership")
-    const path = params["*"];
-    
-    // Authenticate the app proxy request
-    const { session } = await authenticate.public.appProxy(request);
-    
-    if (!session) {
-      return json({ error: "Invalid proxy signature" }, { status: 401 });
-    }
-    
-    // Extract app proxy parameters from the URL
+    // Extract Shopify parameters
     const url = new URL(request.url);
-    const searchParams = url.searchParams;
+    const queryParams = url.searchParams;
     
-    // Get parameters that Shopify adds to app proxy requests
-    const shopDomain = searchParams.get('shop') || session.shop;
-    const customerId = searchParams.get('logged_in_customer_id');
-    const pathPrefix = searchParams.get('path_prefix');
-    const timestamp = searchParams.get('timestamp');
-    const signature = searchParams.get('signature');
+    const shop = queryParams.get("shop");
+    const loggedInCustomerId = queryParams.get("logged_in_customer_id");
+    const pathPrefix = queryParams.get("path_prefix");
     
-    console.log("App Proxy Request:", {
-      path,
-      shop: shopDomain,
-      customerId,
-      timestamp,
-      pathPrefix
+    console.log("[Debug] Shopify params:", {
+      shop,
+      loggedInCustomerId: loggedInCustomerId ? "present" : "missing",
+      pathPrefix,
+      proxyPath
     });
-    
-    // Handle the membership endpoint
-    if (path === "membership") {
-      // If no customer is logged in, return default tier info
-      if (!customerId) {
-        const defaultTier = await prisma.tier.findFirst({
-          where: {
-            shopDomain: shopDomain,
-            isActive: true,
-            minSpend: 0 // or null for base tier
-          },
-          orderBy: {
-            minSpend: 'asc'
-          }
-        });
-        
-        return json({
-          exists: false,
-          storeCredit: 0,
-          totalEarned: 0,
-          tier: {
-            name: defaultTier?.name || "Bronze",
-            cashbackPercent: defaultTier?.cashbackPercent || 1,
-            benefits: defaultTier?.benefits || null
-          }
-        });
+
+    // Route based on the path
+    if (proxyPath === "membership") {
+      // VALIDATE REQUEST SIGNATURE
+      const APP_PROXY_SECRET = process.env.SHOPIFY_APP_PROXY_SECRET;
+      if (!APP_PROXY_SECRET) {
+        console.error("[ERROR] Missing SHOPIFY_APP_PROXY_SECRET");
+        return json({ error: "Server configuration error" }, { status: 500 });
       }
       
-      // Find customer with their active membership and analytics
-      const customer = await prisma.customer.findUnique({
+      if (!validateProxySignature(queryParams, APP_PROXY_SECRET)) {
+        console.error("[ERROR] Invalid signature");
+        return json({ error: "Invalid signature" }, { status: 401 });
+      }
+
+      // CHECK IF CUSTOMER IS LOGGED IN
+      if (!loggedInCustomerId) {
+        return json(
+          { 
+            error: "Not authenticated",
+            requiresLogin: true,
+            message: "Please log in to view your rewards"
+          },
+          { status: 401 }
+        );
+      }
+
+      if (!shop) {
+        return json({ error: "Missing shop parameter" }, { status: 400 });
+      }
+
+      // FETCH OR CREATE CUSTOMER
+      let customer = await prisma.customer.findUnique({
         where: {
           shopDomain_shopifyCustomerId: {
-            shopDomain: shopDomain,
-            shopifyCustomerId: customerId,
+            shopDomain: shop,
+            shopifyCustomerId: loggedInCustomerId
           }
         },
         include: {
           membershipHistory: {
-            where: { 
-              isActive: true 
-            },
-            include: { 
-              tier: true 
-            },
-            orderBy: { 
-              startDate: 'desc' 
-            },
+            where: { isActive: true },
+            include: { tier: true },
             take: 1
           },
-          analytics: true
+          analytics: true,
+          creditLedger: {
+            orderBy: { createdAt: 'desc' },
+            take: 5
+          },
+          transactions: {
+            orderBy: { createdAt: 'desc' },
+            take: 5
+          }
         }
       });
-      
-      // If customer doesn't exist in your database yet
+
       if (!customer) {
-        console.log(`Customer ${customerId} not found for shop ${shopDomain}`);
+        console.log("[Debug] Creating new customer...");
         
-        // Get default tier for new customers
-        const defaultTier = await prisma.tier.findFirst({
+        // Get or create default tier
+        let defaultTier = await prisma.tier.findFirst({
           where: {
-            shopDomain: shopDomain,
-            isActive: true,
-            minSpend: 0 // or null for base tier
+            shopDomain: shop,
+            isActive: true
           },
-          orderBy: {
-            minSpend: 'asc'
-          }
+          orderBy: { minSpend: 'asc' }
         });
-        
-        return json({
-          exists: false,
-          storeCredit: 0,
-          totalEarned: 0,
-          tier: {
-            name: defaultTier?.name || "Bronze",
-            cashbackPercent: defaultTier?.cashbackPercent || 1,
-            benefits: defaultTier?.benefits || null
-          },
-          analytics: {
-            nextTierProgress: 0,
-            lifetimeSpending: 0
-          }
-        });
-      }
-      
-      // Customer exists - prepare response data
-      const activeMembership = customer.membershipHistory[0];
-      const currentTier = activeMembership?.tier;
-      
-      // Get next tier info for progress calculation
-      let nextTier = null;
-      if (currentTier?.minSpend !== null) {
-        nextTier = await prisma.tier.findFirst({
-          where: {
-            shopDomain: shopDomain,
-            isActive: true,
-            minSpend: {
-              gt: currentTier.minSpend
+
+        if (!defaultTier) {
+          defaultTier = await prisma.tier.create({
+            data: {
+              shopDomain: shop,
+              name: "Bronze",
+              minSpend: 0,
+              cashbackPercent: 1,
+              evaluationPeriod: "ANNUAL",
+              isActive: true,
+              benefits: {
+                description: "Welcome to our rewards program!",
+                perks: ["1% cashback on all purchases"]
+              }
+            }
+          });
+        }
+
+        customer = await prisma.customer.create({
+          data: {
+            shopDomain: shop,
+            shopifyCustomerId: loggedInCustomerId,
+            email: "",
+            storeCredit: 0,
+            totalEarned: 0,
+            membershipHistory: {
+              create: {
+                tierId: defaultTier.id,
+                assignmentType: AssignmentType.AUTOMATIC,
+                isActive: true
+              }
+            },
+            analytics: {
+              create: {
+                shopDomain: shop,
+                lifetimeSpending: 0,
+                yearlySpending: 0,
+                quarterlySpending: 0,
+                monthlySpending: 0,
+                avgOrderValue: 0,
+                orderCount: 0,
+                currentTierDays: 0,
+                tierUpgradeCount: 0,
+                nextTierProgress: 0
+              }
             }
           },
-          orderBy: {
-            minSpend: 'asc'
+          include: {
+            membershipHistory: {
+              where: { isActive: true },
+              include: { tier: true },
+              take: 1
+            },
+            analytics: true,
+            creditLedger: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            },
+            transactions: {
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            }
           }
         });
       }
-      
+
+      // Build response
+      const activeMembership = customer.membershipHistory[0];
+      const currentTier = activeMembership?.tier;
+
       const responseData = {
-        exists: true,
-        customerId: customer.id,
-        storeCredit: customer.storeCredit,
-        totalEarned: customer.totalEarned,
-        lastSyncedAt: customer.lastSyncedAt,
-        tier: {
-          id: currentTier?.id,
-          name: currentTier?.name || "Bronze",
-          cashbackPercent: currentTier?.cashbackPercent || 1,
-          benefits: currentTier?.benefits || null,
-          evaluationPeriod: currentTier?.evaluationPeriod
+        success: true,
+        customer: {
+          id: customer.id,
+          shopifyId: loggedInCustomerId,
+          memberSince: customer.createdAt.toISOString()
+        },
+        balance: {
+          storeCredit: customer.storeCredit,
+          totalEarned: customer.totalEarned,
+          pending: 0,
+          lastSynced: customer.lastSyncedAt?.toISOString() || null
         },
         membership: {
-          startDate: activeMembership?.startDate,
-          assignmentType: activeMembership?.assignmentType,
-          endDate: activeMembership?.endDate
+          tier: currentTier ? {
+            id: currentTier.id,
+            name: currentTier.name,
+            cashbackPercent: currentTier.cashbackPercent,
+            benefits: currentTier.benefits || {},
+            evaluationPeriod: currentTier.evaluationPeriod
+          } : null
         },
-        analytics: customer.analytics ? {
-          lifetimeSpending: customer.analytics.lifetimeSpending,
-          yearlySpending: customer.analytics.yearlySpending,
-          avgOrderValue: customer.analytics.avgOrderValue,
-          orderCount: customer.analytics.orderCount,
-          nextTierProgress: customer.analytics.nextTierProgress,
-          currentTierDays: customer.analytics.currentTierDays,
-          lastOrderDate: customer.analytics.lastOrderDate
-        } : null,
-        nextTier: nextTier ? {
-          name: nextTier.name,
-          minSpend: nextTier.minSpend,
-          cashbackPercent: nextTier.cashbackPercent,
-          amountNeeded: nextTier.minSpend ? nextTier.minSpend - (customer.analytics?.yearlySpending || 0) : null
-        } : null
+        recentActivity: customer.transactions.map(tx => ({
+          id: tx.id,
+          type: 'cashback_earned',
+          amount: tx.cashbackAmount,
+          description: `Order #${tx.shopifyOrderId.slice(-6)}`,
+          date: tx.createdAt.toISOString()
+        }))
       };
-      
-      console.log("Returning customer data:", {
-        customerId: customer.id,
-        tier: currentTier?.name,
-        storeCredit: customer.storeCredit
-      });
-      
+
+      console.log("[Debug] Sending membership response");
       return json(responseData);
     }
-    
-    // Handle store credit balance endpoint
-    if (path === "balance") {
-      if (!customerId) {
-        return json({ 
-          storeCredit: 0,
-          formattedCredit: "$0.00"
-        });
-      }
-      
-      const customer = await prisma.customer.findUnique({
-        where: {
-          shopDomain_shopifyCustomerId: {
-            shopDomain: shopDomain,
-            shopifyCustomerId: customerId,
-          }
-        },
-        select: {
-          storeCredit: true,
-          totalEarned: true,
-          lastSyncedAt: true
-        }
-      });
-      
-      return json({
-        storeCredit: customer?.storeCredit || 0,
-        totalEarned: customer?.totalEarned || 0,
-        lastSyncedAt: customer?.lastSyncedAt,
-        formattedCredit: new Intl.NumberFormat('en-US', {
-          style: 'currency',
-          currency: 'USD' // You might want to get this from shop settings
-        }).format(customer?.storeCredit || 0)
-      });
-    }
-    
-    // Handle recent transactions endpoint
-    if (path === "transactions") {
-      if (!customerId) {
-        return json({ transactions: [] });
-      }
-      
-      const customer = await prisma.customer.findUnique({
-        where: {
-          shopDomain_shopifyCustomerId: {
-            shopDomain: shopDomain,
-            shopifyCustomerId: customerId,
-          }
-        }
-      });
-      
-      if (!customer) {
-        return json({ transactions: [] });
-      }
-      
-      const transactions = await prisma.cashbackTransaction.findMany({
-        where: {
-          customerId: customer.id,
-          shopDomain: shopDomain
-        },
-        orderBy: {
-          createdAt: 'desc'
-        },
-        take: 10
-      });
-      
-      return json({
-        transactions: transactions.map(t => ({
-          id: t.id,
-          orderAmount: t.orderAmount,
-          cashbackAmount: t.cashbackAmount,
-          cashbackPercent: t.cashbackPercent,
-          status: t.status,
-          createdAt: t.createdAt,
-          shopifyOrderId: t.shopifyOrderId
-        }))
-      });
-    }
-    
-    return json({ error: "Endpoint not found" }, { status: 404 });
-    
-  } catch (error) {
-    console.error("App Proxy Error:", error);
-    
-    // Don't expose internal error details in production
-    const errorMessage = process.env.NODE_ENV === "production" 
-      ? "Internal server error" 
-      : error instanceof Error ? error.message : "Unknown error";
-    
+
+    // Handle other paths
     return json({ 
-      error: "Internal server error",
-      message: errorMessage
-    }, { status: 500 });
+      error: "Not found",
+      path: proxyPath 
+    }, { status: 404 });
+
+  } catch (error) {
+    console.error("[ERROR] Proxy handler error:", error);
+    return json(
+      { 
+        error: "Internal server error",
+        message: String(error)
+      },
+      { status: 500 }
+    );
   }
-};
+}
