@@ -1,6 +1,6 @@
 <!-- extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
 {% comment %} 
-  Simplified version - Let JavaScript handle login/logout states
+  Fixed version with better customer detection
 {% endcomment %}
 
 {% if block.settings.enabled %}
@@ -11,11 +11,50 @@
     
     <div class="rp-content">
       <!-- JavaScript will fill this based on login status -->
-      <!-- Initial loading state -->
-      <div class="rp-loading">
-        <div class="rp-spinner"></div>
-        <p>Loading rewards...</p>
-      </div>
+      <!-- Initial loading state or login prompt based on customer status -->
+      {% if customer %}
+        <div class="rp-loading">
+          <div class="rp-spinner"></div>
+          <p>Loading your rewards...</p>
+        </div>
+      {% else %}
+        <!-- Show login prompt immediately for non-logged-in users -->
+        <div class="rp-login-prompt">
+          <div class="rp-login-icon">🎁</div>
+          <h3>Join Our Rewards Program!</h3>
+          <p class="rp-login-message">
+            Earn cashback on every purchase and unlock exclusive benefits as a member.
+          </p>
+          
+          <div class="rp-benefits">
+            <div class="rp-benefit">
+              <span class="rp-benefit-icon">💰</span>
+              <span>Earn cashback on all orders</span>
+            </div>
+            <div class="rp-benefit">
+              <span class="rp-benefit-icon">⭐</span>
+              <span>Unlock higher tier benefits</span>
+            </div>
+            <div class="rp-benefit">
+              <span class="rp-benefit-icon">🎯</span>
+              <span>Get exclusive member offers</span>
+            </div>
+          </div>
+          
+          <div class="rp-login-actions">
+            <a href="/account/login" class="rp-login-btn rp-btn-primary">
+              Sign In
+            </a>
+            <a href="/account/register" class="rp-register-btn rp-btn-secondary">
+              Create Account
+            </a>
+          </div>
+          
+          <p class="rp-login-footer">
+            Already have an account? Sign in to view your rewards balance.
+          </p>
+        </div>
+      {% endif %}
     </div>
     
     {% if block.settings.show_minimized %}
@@ -43,6 +82,9 @@
           customerName: {{ customer.first_name | default: customer.email | json }},
         {% else %}
           isLoggedIn: false,
+          customerId: null,
+          customerEmail: null,
+          customerName: null,
         {% endif %}
         settings: {
           position: {{ block.settings.position | json }},
@@ -53,6 +95,11 @@
       
       {% if block.settings.debug_mode %}
         console.log('[RewardsPro] Widget context:', window.RewardsProContext['{{ block.id }}']);
+        {% if customer %}
+          console.log('[RewardsPro] Customer is logged in:', {{ customer.id | json }});
+        {% else %}
+          console.log('[RewardsPro] Customer is NOT logged in');
+        {% endif %}
       {% endif %}
     })();
   </script>
@@ -99,6 +146,72 @@
         border-top: 3px solid #667eea;
         border-radius: 50%;
         animation: spin 1s linear infinite;
+      }
+      
+      /* Login prompt styles for immediate display */
+      #rewardspro-widget-{{ block.id }} .rp-login-prompt {
+        padding: 32px;
+        text-align: center;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-prompt h3 {
+        margin: 0 0 12px 0;
+        font-size: 24px;
+        font-weight: 700;
+        color: #1a1a1a;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-benefits {
+        margin: 24px 0;
+        padding: 20px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        border-radius: 12px;
+        text-align: left;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-benefit {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0;
+        font-size: 14px;
+        color: #495057;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        margin: 24px 0;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-btn,
+      #rewardspro-widget-{{ block.id }} .rp-register-btn {
+        display: inline-block;
+        padding: 14px 32px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 15px;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        cursor: pointer;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-btn-secondary {
+        background: white;
+        color: #667eea;
+        border: 2px solid #667eea;
       }
       
       @keyframes spin {

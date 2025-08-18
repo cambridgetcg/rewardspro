@@ -1,5 +1,5 @@
 // app/routes/api.proxy.$.tsx
-// Updated version with better handling for non-logged-in users
+// Fixed version with better non-logged-in user detection
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "../db.server";
@@ -9,6 +9,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   
   console.log("Proxy path:", proxyPath);
+  console.log("Request URL:", request.url);
   
   // Set CORS headers for all responses
   const headers = {
@@ -24,19 +25,29 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     return json({
       success: true,
       message: "Proxy works!",
-      path: proxyPath
+      path: proxyPath,
+      timestamp: new Date().toISOString()
     }, { headers });
   }
   
   // Membership endpoint - USES YOUR REAL DATABASE
   if (proxyPath === "membership") {
-    const customerId = url.searchParams.get("logged_in_customer_id");
+    // Get customer ID from query params or headers
+    let customerId = url.searchParams.get("logged_in_customer_id");
     const shop = url.searchParams.get("shop");
     
+    // Also check alternative parameter names that Shopify might use
+    if (!customerId) {
+      customerId = url.searchParams.get("customer_id") || 
+                   url.searchParams.get("customerId") ||
+                   url.searchParams.get("cid");
+    }
+    
     console.log("Membership request - Customer:", customerId, "Shop:", shop);
+    console.log("All query params:", Object.fromEntries(url.searchParams));
     
     // Handle non-logged-in users gracefully
-    if (!customerId || customerId === "") {
+    if (!customerId || customerId === "" || customerId === "null" || customerId === "undefined") {
       console.log("No customer ID - user not logged in");
       // Return 200 with requiresLogin flag (not an error!)
       return json({
@@ -56,6 +67,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
             name: "Guest",
             cashbackPercent: 1
           }
+        },
+        debug: {
+          customerId: customerId,
+          shop: shop,
+          message: "Customer not logged in"
         }
       }, { 
         status: 200,  // Return 200, not 401, since this is expected behavior
@@ -64,10 +80,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     }
     
     if (!shop) {
+      console.warn("Missing shop parameter");
       return json({
         success: false,
         error: "Missing shop parameter",
-        message: "Invalid request - shop parameter required"
+        message: "Invalid request - shop parameter required",
+        requiresLogin: false
       }, { status: 400, headers });
     }
     
@@ -190,12 +208,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     } catch (error) {
       console.error("❌ Database error:", error);
       
+      // Check if it's a connection error
+      const isConnectionError = error instanceof Error && 
+        (error.message.includes('connect') || 
+         error.message.includes('ECONNREFUSED') ||
+         error.message.includes('P1001'));
+      
       // Return error but with fallback data so widget doesn't break
       return json({
         success: false,
-        error: "Database connection failed",
+        error: isConnectionError ? "Database connection failed" : "Database error",
         details: error instanceof Error ? error.message : "Unknown error",
         message: "Unable to load rewards data",
+        requiresLogin: false,
         // Fallback data structure
         customer: {
           id: "error",
@@ -226,4 +251,20 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     path: proxyPath,
     availablePaths: ["test", "membership"]
   }, { status: 404, headers });
+}
+
+// Handle OPTIONS requests for CORS
+export async function action({ request }: LoaderFunctionArgs) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }
+  
+  return json({ error: "Method not allowed" }, { status: 405 });
 }

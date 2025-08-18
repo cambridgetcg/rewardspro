@@ -1,5 +1,5 @@
 // extensions/rewardspro-widget/assets/rewards-widget.js
-// Updated version with better login prompt
+// Fixed version with better error handling and login detection
 
 class RewardsWidget {
   constructor(container) {
@@ -12,11 +12,34 @@ class RewardsWidget {
       retryDelay: 1000
     };
     
+    // Check if we have customer context from Liquid
+    this.context = this.getContextFromLiquid();
+    
     console.log(`[RewardsWidget ${this.id}] Initializing...`);
     this.init();
   }
 
+  getContextFromLiquid() {
+    // Try to get context from the Liquid template
+    const blockId = this.container?.dataset?.blockId;
+    if (window.RewardsProContext && blockId) {
+      return window.RewardsProContext[blockId];
+    }
+    // Fallback: try to detect if Shopify customer is logged in
+    return {
+      isLoggedIn: typeof window.ShopifyAnalytics?.meta?.page?.customerId === 'number',
+      customerId: window.ShopifyAnalytics?.meta?.page?.customerId || null
+    };
+  }
+
   async init() {
+    // If we know the customer is not logged in from Liquid context, show login prompt immediately
+    if (this.context && this.context.isLoggedIn === false) {
+      console.log('[RewardsWidget] Customer not logged in (detected from context) - showing login prompt');
+      this.showLoginPrompt();
+      return;
+    }
+    
     // Show loading state
     this.showLoading();
     
@@ -40,12 +63,41 @@ class RewardsWidget {
       });
 
       console.log('[RewardsWidget] Response status:', response.status);
+      
+      // Check if response is JSON before trying to parse
+      const contentType = response.headers.get('content-type');
+      const isJson = contentType && contentType.includes('application/json');
+      
+      if (!isJson) {
+        console.warn('[RewardsWidget] Response is not JSON, likely HTML error page or app proxy not configured');
+        console.log('[RewardsWidget] Content-Type:', contentType);
+        
+        // If we get HTML back, it's likely the app proxy isn't configured
+        // or the user is not logged in - show login prompt as fallback
+        if (response.status === 404 || response.status === 401 || !this.context?.isLoggedIn) {
+          console.log('[RewardsWidget] Showing login prompt due to non-JSON response');
+          this.showLoginPrompt();
+          return;
+        }
+        
+        throw new Error('Invalid response format - expected JSON but got ' + (contentType || 'unknown'));
+      }
 
-      const data = await response.json();
+      // Now safe to parse JSON
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        console.error('[RewardsWidget] Failed to parse JSON:', jsonError);
+        // If JSON parsing fails but we expected JSON, show login prompt as safe fallback
+        this.showLoginPrompt();
+        return;
+      }
+      
       console.log('[RewardsWidget] Received data:', data);
       
       // Check if user is not logged in (this is not an error!)
-      if (data.requiresLogin || data.error === "Not logged in") {
+      if (data.requiresLogin || data.error === "Not logged in" || data.error === "Missing customer parameter") {
         console.log('[RewardsWidget] Customer not logged in - showing login prompt');
         this.showLoginPrompt();
         return;
@@ -60,11 +112,25 @@ class RewardsWidget {
       if (data.success) {
         this.updateWidgetData(data);
       } else if (data.error) {
+        // If there's an error but it might be login-related, show login prompt
+        if (data.error.toLowerCase().includes('login') || 
+            data.error.toLowerCase().includes('customer') ||
+            data.error.toLowerCase().includes('auth')) {
+          this.showLoginPrompt();
+          return;
+        }
         throw new Error(data.error);
       }
       
     } catch (error) {
       console.error(`[RewardsWidget] Error on attempt ${attempt}:`, error);
+      
+      // If it's a network error or similar, and we're not logged in, show login prompt
+      if (!this.context?.isLoggedIn) {
+        console.log('[RewardsWidget] Error occurred and customer not logged in - showing login prompt');
+        this.showLoginPrompt();
+        return;
+      }
       
       // Retry logic for actual errors (not login issues)
       if (attempt < this.config.retryAttempts) {
@@ -73,7 +139,16 @@ class RewardsWidget {
           this.fetchCustomerData(attempt + 1);
         }, this.config.retryDelay);
       } else {
-        this.showError(`Unable to load rewards. Please try again later.`);
+        // Final fallback - if all retries failed and we can't determine login status, 
+        // show login prompt instead of error
+        if (error.message.includes('Invalid response format') || 
+            error.message.includes('404') || 
+            error.message.includes('Failed to fetch')) {
+          console.log('[RewardsWidget] Showing login prompt as final fallback');
+          this.showLoginPrompt();
+        } else {
+          this.showError(`Unable to load rewards. Please try again later.`);
+        }
       }
     }
   }
@@ -234,12 +309,25 @@ class RewardsWidget {
         const response = await fetch(endpoint, {
           credentials: 'same-origin'
         });
-        const data = await response.json().catch(() => null);
-        console.log(`[Debug] ${endpoint}:`, {
-          status: response.status,
-          ok: response.ok,
-          data: data
-        });
+        
+        const contentType = response.headers.get('content-type');
+        console.log(`[Debug] ${endpoint} Content-Type:`, contentType);
+        
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          console.log(`[Debug] ${endpoint}:`, {
+            status: response.status,
+            ok: response.ok,
+            data: data
+          });
+        } else {
+          const text = await response.text();
+          console.log(`[Debug] ${endpoint} returned non-JSON:`, {
+            status: response.status,
+            contentType: contentType,
+            preview: text.substring(0, 200)
+          });
+        }
       } catch (error) {
         console.error(`[Debug] ${endpoint} failed:`, error);
       }
