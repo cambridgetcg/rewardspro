@@ -1,4 +1,5 @@
 // extensions/rewardspro-widget/assets/rewards-widget.js
+// Updated version with better login prompt
 
 class RewardsWidget {
   constructor(container) {
@@ -6,7 +7,7 @@ class RewardsWidget {
     this.id = container?.id || 'rewards-widget';
     this.contentEl = container?.querySelector('.rp-content') || container;
     this.config = {
-      debug: true,
+      debug: false,  // Set to false for production
       retryAttempts: 3,
       retryDelay: 1000
     };
@@ -19,61 +20,19 @@ class RewardsWidget {
     // Show loading state
     this.showLoading();
     
-    // Test proxy connection first
-    const testResult = await this.testProxyConnection();
-    if (!testResult) {
-      console.error('[RewardsWidget] Proxy test failed');
-      this.showError('Unable to connect to rewards service');
-      return;
-    }
-    
     // Fetch customer data
     await this.fetchCustomerData();
   }
 
-  async testProxyConnection() {
-    try {
-      console.log('[RewardsWidget] Testing proxy connection...');
-      
-      // Use relative URL - Shopify will handle the domain
-      const testUrl = '/apps/rewardspro/test';
-      console.log('[RewardsWidget] Test URL:', testUrl);
-      
-      const response = await fetch(testUrl, {
-        method: 'GET',
-        credentials: 'same-origin',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('[RewardsWidget] Proxy test successful:', data);
-        return true;
-      }
-      
-      console.error('[RewardsWidget] Proxy test failed with status:', response.status);
-      return false;
-      
-    } catch (error) {
-      console.error('[RewardsWidget] Proxy test error:', error);
-      return false;
-    }
-  }
-
   async fetchCustomerData(attempt = 1) {
     try {
-      // Use the proxy endpoint
       const url = '/apps/rewardspro/membership';
       
       console.log(`[RewardsWidget] Fetching customer data (attempt ${attempt})...`);
-      console.log('[RewardsWidget] URL:', url);
-      console.log('[RewardsWidget] Full URL:', window.location.origin + url);
       
       const response = await fetch(url, {
         method: 'GET',
-        credentials: 'same-origin', // Important for cookies
+        credentials: 'same-origin',
         headers: {
           'Accept': 'application/json',
           'Cache-Control': 'no-cache'
@@ -81,48 +40,40 @@ class RewardsWidget {
       });
 
       console.log('[RewardsWidget] Response status:', response.status);
-      console.log('[RewardsWidget] Response headers:', response.headers);
-
-      // Handle different response scenarios
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ 
-          error: 'Failed to parse error response' 
-        }));
-        
-        console.log('[RewardsWidget] Error response:', errorData);
-        
-        if (response.status === 401) {
-          if (errorData.requiresLogin) {
-            console.log('[RewardsWidget] Customer not logged in');
-            this.showLoginPrompt();
-            return;
-          }
-          throw new Error('Authentication failed');
-        }
-        
-        throw new Error(errorData.error || `HTTP ${response.status}`);
-      }
 
       const data = await response.json();
       console.log('[RewardsWidget] Received data:', data);
       
+      // Check if user is not logged in (this is not an error!)
+      if (data.requiresLogin || data.error === "Not logged in") {
+        console.log('[RewardsWidget] Customer not logged in - showing login prompt');
+        this.showLoginPrompt();
+        return;
+      }
+      
+      // Check for actual errors
+      if (!response.ok && response.status !== 401) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      
+      // Success - show the data
       if (data.success) {
         this.updateWidgetData(data);
-      } else {
-        throw new Error(data.error || 'Invalid response format');
+      } else if (data.error) {
+        throw new Error(data.error);
       }
       
     } catch (error) {
       console.error(`[RewardsWidget] Error on attempt ${attempt}:`, error);
       
-      // Retry logic
+      // Retry logic for actual errors (not login issues)
       if (attempt < this.config.retryAttempts) {
         console.log(`[RewardsWidget] Retrying in ${this.config.retryDelay}ms...`);
         setTimeout(() => {
           this.fetchCustomerData(attempt + 1);
         }, this.config.retryDelay);
       } else {
-        this.showError(`Error: ${error.message}`);
+        this.showError(`Unable to load rewards. Please try again later.`);
       }
     }
   }
@@ -137,10 +88,10 @@ class RewardsWidget {
 
     const html = `
       <div class="rp-customer-info">
-        <h3>Your Rewards</h3>
+        <h3>🎁 Your Rewards</h3>
         
         <div class="rp-stats-grid">
-          <div class="rp-stat-card">
+          <div class="rp-stat-card rp-stat-card-primary">
             <div class="rp-stat-value">$${(data.balance?.storeCredit || 0).toFixed(2)}</div>
             <div class="rp-stat-label">Store Credit</div>
           </div>
@@ -161,28 +112,31 @@ class RewardsWidget {
           </div>
         </div>
         
-        <div class="rp-customer-id">
-          Customer ID: ${data.customer?.shopifyId || 'Unknown'}
+        <div class="rp-customer-details">
+          <p class="rp-customer-id">Customer ID: ${data.customer?.shopifyId || 'Unknown'}</p>
+          ${data.customer?.memberSince ? `
+            <p class="rp-member-since">Member since: ${new Date(data.customer.memberSince).toLocaleDateString()}</p>
+          ` : ''}
         </div>
         
-        ${this.config.debug ? `
+        ${this.config.debug && data.debug ? `
         <div class="rp-debug-info">
           <strong>Debug Info:</strong><br>
+          Database Connected: ${data.debug.databaseConnected ? '✅' : '❌'}<br>
+          Customer UUID: ${data.debug.customerId || 'N/A'}<br>
           Last Synced: ${data.balance?.lastSynced ? new Date(data.balance.lastSynced).toLocaleString() : 'Never'}<br>
-          Member Since: ${data.customer?.memberSince ? new Date(data.customer.memberSince).toLocaleDateString() : 'Unknown'}
+          Created: ${data.debug?.createdAt ? new Date(data.debug.createdAt).toLocaleString() : 'Unknown'}
         </div>
         ` : ''}
       </div>
     `;
     
     this.contentEl.innerHTML = html;
-    
-    // Update any other elements on the page
     this.updatePageElements(data);
   }
 
   updatePageElements(data) {
-    // Update any elements with data attributes
+    // Update any elements on the page with data attributes
     const creditElements = document.querySelectorAll('[data-rewards-credit]');
     creditElements.forEach(el => {
       el.textContent = `$${(data.balance?.storeCredit || 0).toFixed(2)}`;
@@ -191,11 +145,6 @@ class RewardsWidget {
     const tierElements = document.querySelectorAll('[data-rewards-tier]');
     tierElements.forEach(el => {
       el.textContent = data.membership?.tier?.name || 'Bronze';
-    });
-    
-    const rateElements = document.querySelectorAll('[data-rewards-rate]');
-    rateElements.forEach(el => {
-      el.textContent = `${data.membership?.tier?.cashbackPercent || 1}%`;
     });
   }
 
@@ -212,10 +161,39 @@ class RewardsWidget {
   showLoginPrompt() {
     const loginHtml = `
       <div class="rp-login-prompt">
-        <h3>Rewards Program</h3>
-        <p>Please log in to view your rewards and cashback balance</p>
-        <a href="/account/login" class="rp-login-btn">Log In</a>
-        <a href="/account/register" class="rp-register-btn">Sign Up</a>
+        <div class="rp-login-icon">🎁</div>
+        <h3>Join Our Rewards Program!</h3>
+        <p class="rp-login-message">
+          Earn cashback on every purchase and unlock exclusive benefits as a member.
+        </p>
+        
+        <div class="rp-benefits">
+          <div class="rp-benefit">
+            <span class="rp-benefit-icon">💰</span>
+            <span>Earn cashback on all orders</span>
+          </div>
+          <div class="rp-benefit">
+            <span class="rp-benefit-icon">⭐</span>
+            <span>Unlock higher tier benefits</span>
+          </div>
+          <div class="rp-benefit">
+            <span class="rp-benefit-icon">🎯</span>
+            <span>Get exclusive member offers</span>
+          </div>
+        </div>
+        
+        <div class="rp-login-actions">
+          <a href="/account/login" class="rp-login-btn rp-btn-primary">
+            Sign In
+          </a>
+          <a href="/account/register" class="rp-register-btn rp-btn-secondary">
+            Create Account
+          </a>
+        </div>
+        
+        <p class="rp-login-footer">
+          Already have an account? Sign in to view your rewards balance.
+        </p>
       </div>
     `;
     this.contentEl.innerHTML = loginHtml;
@@ -241,12 +219,11 @@ class RewardsWidget {
     this.contentEl.innerHTML = errorHtml;
   }
 
-  // Utility method to manually test different endpoints
+  // Utility method for manual testing
   async debugTest() {
     const endpoints = [
       '/apps/rewardspro/test',
-      '/apps/rewardspro/membership',
-      '/apps/rewardspro/balance'
+      '/apps/rewardspro/membership'
     ];
 
     console.log('[RewardsWidget] Starting debug test...');

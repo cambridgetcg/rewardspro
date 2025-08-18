@@ -1,442 +1,189 @@
-/* extensions/rewardspro-widget/assets/rewards-widget.css */
+/* Add this to your rewards-widget.css file */
 
 /* ============================================
-   Base Widget Container
-   ============================================ */
-.rewardspro-widget {
-  position: fixed;
-  z-index: 999999;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #1a1a1a;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Position variations */
-.rp-position-bottom-right {
-  bottom: 20px;
-  right: 20px;
-}
-
-.rp-position-bottom-left {
-  bottom: 20px;
-  left: 20px;
-}
-
-.rp-position-top-right {
-  top: 20px;
-  right: 20px;
-}
-
-.rp-position-top-left {
-  top: 20px;
-  left: 20px;
-}
-
-/* ============================================
-   Content Container
-   ============================================ */
-.rp-content {
-  width: 380px;
-  max-width: calc(100vw - 40px);
-  background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
-  border-radius: 16px;
-  box-shadow: 
-    0 10px 40px rgba(0, 0, 0, 0.12),
-    0 2px 10px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
-  animation: slideIn 0.3s ease-out;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* ============================================
-   Customer Info Section
-   ============================================ */
-.rp-customer-info {
-  padding: 24px;
-}
-
-.rp-customer-info h3 {
-  margin: 0 0 20px 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: #1a1a1a;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rp-customer-info h3::before {
-  content: "🎁";
-  font-size: 24px;
-}
-
-/* ============================================
-   Stats Grid
-   ============================================ */
-.rp-stats-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.rp-stat-card {
-  background: white;
-  border-radius: 12px;
-  padding: 16px;
-  text-align: center;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  transition: all 0.2s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.rp-stat-card::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, #007bff, #00a8ff);
-  transform: scaleX(0);
-  transition: transform 0.3s ease;
-}
-
-.rp-stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 123, 255, 0.15);
-}
-
-.rp-stat-card:hover::before {
-  transform: scaleX(1);
-}
-
-.rp-stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #007bff;
-  margin-bottom: 4px;
-  letter-spacing: -0.5px;
-}
-
-.rp-stat-label {
-  font-size: 12px;
-  color: #6c757d;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 500;
-}
-
-/* Special styling for first card (Store Credit) */
-.rp-stat-card:first-child {
-  grid-column: span 2;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-}
-
-.rp-stat-card:first-child .rp-stat-value {
-  font-size: 36px;
-  color: white;
-}
-
-.rp-stat-card:first-child .rp-stat-label {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-/* ============================================
-   Customer ID Section
-   ============================================ */
-.rp-customer-id {
-  padding: 8px 12px;
-  background: rgba(0, 123, 255, 0.08);
-  border-radius: 8px;
-  font-size: 12px;
-  color: #495057;
-  font-family: 'Monaco', 'Courier New', monospace;
-  margin-top: 16px;
-}
-
-/* ============================================
-   Loading State
-   ============================================ */
-.rp-loading {
-  padding: 40px;
-  text-align: center;
-}
-
-.rp-spinner {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 16px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #007bff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.rp-loading p {
-  margin: 0;
-  color: #6c757d;
-  font-size: 14px;
-}
-
-/* ============================================
-   Login Prompt
+   Login Prompt Styles
    ============================================ */
 .rp-login-prompt {
   padding: 32px;
   text-align: center;
+  animation: fadeIn 0.3s ease-in;
 }
 
-.rp-login-prompt h3 {
-  margin: 0 0 12px 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #1a1a1a;
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.rp-login-prompt p {
-  margin: 0 0 24px 0;
-  color: #6c757d;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.rp-login-btn,
-.rp-register-btn {
-  display: inline-block;
-  padding: 12px 32px;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  text-decoration: none;
-  transition: all 0.2s ease;
-  margin: 0 6px;
-}
-
-.rp-login-btn {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-}
-
-.rp-login-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
-}
-
-.rp-register-btn {
-  background: transparent;
-  color: #007bff;
-  border: 2px solid #007bff;
-}
-
-.rp-register-btn:hover {
-  background: #007bff;
-  color: white;
-}
-
-/* ============================================
-   Error State
-   ============================================ */
-.rp-error {
-  padding: 32px;
-  text-align: center;
-}
-
-.rp-error h3 {
-  margin: 0 0 12px 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: #dc3545;
-}
-
-.rp-error p {
-  margin: 0 0 20px 0;
-  color: #6c757d;
-  font-size: 14px;
-}
-
-.rp-retry-btn {
-  padding: 10px 24px;
-  background: #dc3545;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.rp-retry-btn:hover {
-  background: #c82333;
-  transform: translateY(-1px);
-}
-
-/* ============================================
-   Debug Info
-   ============================================ */
-.rp-debug-info {
-  margin-top: 16px;
-  padding: 12px;
-  background: #f8f9fa;
-  border-radius: 8px;
-  font-size: 11px;
-  font-family: 'Monaco', 'Courier New', monospace;
-  color: #495057;
-  border: 1px dashed #dee2e6;
-}
-
-.rp-debug-info strong {
-  color: #1a1a1a;
-}
-
-/* ============================================
-   Minimized State
-   ============================================ */
-.rp-minimized {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 30px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
-  transition: all 0.3s ease;
-  white-space: nowrap;
-}
-
-.rp-minimized:hover {
-  transform: scale(1.05) translateY(-2px);
-  box-shadow: 0 6px 30px rgba(102, 126, 234, 0.5);
-}
-
-.rp-icon {
-  font-size: 18px;
+.rp-login-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
   animation: bounce 2s infinite;
 }
 
 @keyframes bounce {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-3px); }
+  50% { transform: translateY(-10px); }
 }
 
-.rp-mini-value {
-  background: rgba(255, 255, 255, 0.25);
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-size: 13px;
+.rp-login-prompt h3 {
+  margin: 0 0 12px 0;
+  font-size: 24px;
   font-weight: 700;
+  color: #1a1a1a;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.rp-login-message {
+  margin: 0 0 24px 0;
+  color: #6c757d;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Benefits List */
+.rp-benefits {
+  margin: 24px 0;
+  padding: 20px;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.rp-benefit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: #495057;
+}
+
+.rp-benefit-icon {
+  font-size: 20px;
+  width: 30px;
+  text-align: center;
+}
+
+/* Login Actions */
+.rp-login-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin: 24px 0;
+}
+
+.rp-login-btn,
+.rp-register-btn {
+  display: inline-block;
+  padding: 14px 32px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  border: none;
+}
+
+.rp-btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.rp-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+}
+
+.rp-btn-secondary {
+  background: white;
+  color: #667eea;
+  border: 2px solid #667eea;
+}
+
+.rp-btn-secondary:hover {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-color: transparent;
+  transform: translateY(-2px);
+}
+
+.rp-login-footer {
+  margin: 16px 0 0 0;
+  font-size: 13px;
+  color: #999;
+  font-style: italic;
 }
 
 /* ============================================
-   Mobile Responsive
+   Improved Customer Info Display
+   ============================================ */
+.rp-customer-info h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 20px 0;
+  color: #1a1a1a;
+}
+
+.rp-customer-details {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e0e0e0;
+  font-size: 13px;
+  color: #666;
+}
+
+.rp-customer-id,
+.rp-member-since {
+  margin: 4px 0;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+}
+
+/* ============================================
+   Stat Cards Improvements
+   ============================================ */
+.rp-stat-card-primary {
+  grid-column: span 2;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.rp-stat-card-primary .rp-stat-value {
+  font-size: 36px;
+  color: white;
+}
+
+.rp-stat-card-primary .rp-stat-label {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+}
+
+/* ============================================
+   Mobile Responsive Improvements
    ============================================ */
 @media (max-width: 480px) {
-  .rewardspro-widget {
-    bottom: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    top: auto !important;
-    width: 100%;
+  .rp-login-actions {
+    flex-direction: column;
   }
   
-  .rp-content {
-    width: 100%;
-    max-width: 100%;
-    border-radius: 16px 16px 0 0;
-    animation: slideUp 0.3s ease-out;
-  }
-  
-  @keyframes slideUp {
-    from {
-      transform: translateY(100%);
-    }
-    to {
-      transform: translateY(0);
-    }
-  }
-  
-  .rp-stats-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .rp-stat-card:first-child {
-    grid-column: span 1;
-  }
-  
-  .rp-minimized {
-    bottom: 20px;
-    right: 20px;
-    position: fixed;
-  }
-}
-
-/* ============================================
-   Print Styles
-   ============================================ */
-@media print {
-  .rewardspro-widget {
-    display: none !important;
-  }
-}
-
-/* ============================================
-   Accessibility
-   ============================================ */
-.rp-login-btn:focus,
-.rp-register-btn:focus,
-.rp-retry-btn:focus,
-.rp-minimized:focus {
-  outline: 2px solid #007bff;
-  outline-offset: 2px;
-}
-
-/* High contrast mode support */
-@media (prefers-contrast: high) {
-  .rp-content {
-    border: 2px solid #000;
-  }
-  
-  .rp-stat-card {
-    border: 2px solid #000;
-  }
-}
-
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-  .rp-content,
-  .rp-stat-card,
   .rp-login-btn,
-  .rp-minimized,
-  .rp-icon {
-    animation: none !important;
-    transition: none !important;
+  .rp-register-btn {
+    width: 100%;
+  }
+  
+  .rp-login-prompt {
+    padding: 24px 16px;
+  }
+  
+  .rp-benefits {
+    padding: 16px;
   }
 }
