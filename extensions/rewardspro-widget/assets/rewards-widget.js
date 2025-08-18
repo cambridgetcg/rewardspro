@@ -4,11 +4,99 @@ class RewardsWidget {
     this.container = container;
     this.id = container?.id || 'rewards-widget';
     this.contentEl = container?.querySelector('.rp-content') || container;
+    this.closeBtn = container?.querySelector('.rp-close-btn');
+    this.minimizedBtn = container?.parentElement?.querySelector('.rp-minimized') || 
+                        document.querySelector('.rp-minimized');
     this.retryAttempts = 3;
     this.retryDelay = 1000;
     this.context = this.getContextFromLiquid();
+    this.isMinimized = false;
+    this.dataLoaded = false;
+    this.loadingData = false;
     
+    // Check if widget should start minimized (from session storage)
+    const savedState = sessionStorage.getItem('rewardspro-widget-state');
+    if (savedState === 'minimized') {
+      this.isMinimized = true;
+      this.minimize(false); // Don't animate on initial load
+    }
+    
+    this.setupEventListeners();
     this.init();
+  }
+
+  setupEventListeners() {
+    // Close button click
+    if (this.closeBtn) {
+      this.closeBtn.addEventListener('click', () => {
+        this.minimize();
+      });
+    }
+    
+    // Minimized button click
+    if (this.minimizedBtn) {
+      this.minimizedBtn.addEventListener('click', () => {
+        this.maximize();
+      });
+    }
+    
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.isMinimized) {
+        this.minimize();
+      }
+    });
+  }
+
+  minimize(animate = true) {
+    this.isMinimized = true;
+    
+    // Hide main widget
+    if (animate) {
+      this.container.style.animation = 'slideOut 0.3s ease-out';
+      setTimeout(() => {
+        this.container.style.display = 'none';
+        this.container.style.animation = '';
+      }, 300);
+    } else {
+      this.container.style.display = 'none';
+    }
+    
+    // Show minimized button
+    if (this.minimizedBtn) {
+      this.minimizedBtn.style.display = 'flex';
+      if (animate) {
+        this.minimizedBtn.style.animation = 'slideIn 0.3s ease-out';
+      }
+    }
+    
+    // Save state
+    sessionStorage.setItem('rewardspro-widget-state', 'minimized');
+  }
+
+  maximize() {
+    this.isMinimized = false;
+    
+    // Show main widget
+    this.container.style.display = 'block';
+    this.container.style.animation = 'slideIn 0.3s ease-out';
+    
+    // Hide minimized button
+    if (this.minimizedBtn) {
+      this.minimizedBtn.style.animation = 'slideOut 0.3s ease-out';
+      setTimeout(() => {
+        this.minimizedBtn.style.display = 'none';
+        this.minimizedBtn.style.animation = '';
+      }, 300);
+    }
+    
+    // Save state
+    sessionStorage.setItem('rewardspro-widget-state', 'maximized');
+    
+    // Initialize data if not already loaded
+    if (!this.dataLoaded && !this.loadingData) {
+      this.init();
+    }
   }
 
   getContextFromLiquid() {
@@ -26,17 +114,25 @@ class RewardsWidget {
   }
 
   async init() {
+    // Don't fetch data if minimized
+    if (this.isMinimized) {
+      return;
+    }
+    
     // If customer is not logged in, show login prompt immediately
     if (this.context && this.context.isLoggedIn === false) {
       this.showLoginPrompt();
+      this.dataLoaded = true;
       return;
     }
     
     // Show loading state while fetching data
     this.showLoading();
+    this.loadingData = true;
     
     // Fetch customer data
     await this.fetchCustomerData();
+    this.loadingData = false;
   }
 
   async fetchCustomerData(attempt = 1) {
@@ -59,6 +155,7 @@ class RewardsWidget {
       if (!isJson) {
         // Non-JSON response usually means app proxy not configured or user not logged in
         this.showLoginPrompt();
+        this.dataLoaded = true;
         return;
       }
 
@@ -68,12 +165,14 @@ class RewardsWidget {
         data = await response.json();
       } catch (jsonError) {
         this.showLoginPrompt();
+        this.dataLoaded = true;
         return;
       }
       
       // Check if login is required
       if (data.requiresLogin === true) {
         this.showLoginPrompt();
+        this.dataLoaded = true;
         return;
       }
       
@@ -84,6 +183,7 @@ class RewardsWidget {
         data.error.toLowerCase().includes('auth')
       )) {
         this.showLoginPrompt();
+        this.dataLoaded = true;
         return;
       }
       
@@ -102,6 +202,7 @@ class RewardsWidget {
           error.message.includes('404') || 
           error.message.includes('401')) {
         this.showLoginPrompt();
+        this.dataLoaded = true;
         return;
       }
       
@@ -113,6 +214,7 @@ class RewardsWidget {
       } else {
         // Final fallback - show login prompt
         this.showLoginPrompt();
+        this.dataLoaded = true;
       }
     }
   }
@@ -129,7 +231,7 @@ class RewardsWidget {
         
         <div class="rp-stats-grid">
           <div class="rp-stat-card rp-stat-card-primary">
-            <div class="rp-stat-value">$${(data.balance?.storeCredit || 0).toFixed(2)}</div>
+            <div class="rp-stat-value">${(data.balance?.storeCredit || 0).toFixed(2)}</div>
             <div class="rp-stat-label">Store Credit</div>
           </div>
           
@@ -144,7 +246,7 @@ class RewardsWidget {
           </div>
           
           <div class="rp-stat-card">
-            <div class="rp-stat-value">$${(data.balance?.totalEarned || 0).toFixed(2)}</div>
+            <div class="rp-stat-value">${(data.balance?.totalEarned || 0).toFixed(2)}</div>
             <div class="rp-stat-label">Total Earned</div>
           </div>
         </div>
@@ -164,13 +266,20 @@ class RewardsWidget {
     
     this.contentEl.innerHTML = html;
     this.updatePageElements(data);
+    this.dataLoaded = true;
   }
 
   updatePageElements(data) {
     // Update any elements on the page with rewards data
     const creditElements = document.querySelectorAll('[data-rewards-credit]');
     creditElements.forEach(el => {
-      el.textContent = `$${(data.balance?.storeCredit || 0).toFixed(2)}`;
+      const formattedCredit = `${(data.balance?.storeCredit || 0).toFixed(2)}`;
+      el.textContent = formattedCredit;
+      
+      // Show value in minimized button if it has credit
+      if (el.classList.contains('rp-mini-value') && data.balance?.storeCredit > 0) {
+        el.style.display = 'inline-block';
+      }
     });
     
     const tierElements = document.querySelectorAll('[data-rewards-tier]');
@@ -233,6 +342,7 @@ class RewardsWidget {
       </div>
     `;
     this.contentEl.innerHTML = loginHtml;
+    this.dataLoaded = true;
   }
 
   showError(message) {
@@ -244,6 +354,7 @@ class RewardsWidget {
       </div>
     `;
     this.contentEl.innerHTML = errorHtml;
+    this.dataLoaded = true;
   }
 }
 

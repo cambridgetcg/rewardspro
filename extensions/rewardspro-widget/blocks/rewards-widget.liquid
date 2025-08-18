@@ -5,7 +5,13 @@
        data-rewards-widget
        data-block-id="{{ block.id }}">
     
-    <div class="rp-content">
+    <button class="rp-close-btn" aria-label="Close rewards widget" title="Close">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+    
+    <div class="rp-content"
       {% if customer %}
         <div class="rp-loading">
           <div class="rp-spinner"></div>
@@ -50,13 +56,11 @@
       {% endif %}
     </div>
     
-    {% if block.settings.show_minimized %}
-      <button class="rp-minimized" aria-label="Open rewards" style="display: none;">
-        <span class="rp-icon">🎁</span>
-        <span class="rp-text">Rewards</span>
-        <span class="rp-mini-value" data-rewards-credit>$0</span>
-      </button>
-    {% endif %}
+    <button class="rp-minimized rp-position-{{ block.settings.position }}" aria-label="Open rewards widget" style="display: none;">
+      <span class="rp-icon">🎁</span>
+      <span class="rp-text">Rewards</span>
+      <span class="rp-mini-value" data-rewards-credit></span>
+    </button>
   </div>
 
   <script>
@@ -107,6 +111,29 @@
       #rewardspro-widget-{{ block.id }}.rp-position-top-left {
         top: 20px;
         left: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-close-btn {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.05);
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+        z-index: 10;
+        color: #666;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-close-btn:hover {
+        background: rgba(0, 0, 0, 0.1);
+        transform: rotate(90deg);
       }
       
       #rewardspro-widget-{{ block.id }} .rp-content {
@@ -223,6 +250,47 @@
         0%, 100% { transform: translateY(0); }
         50% { transform: translateY(-10px); }
       }
+      
+      @keyframes slideOut {
+        from { opacity: 1; transform: translateY(0); }
+        to { opacity: 0; transform: translateY(20px); }
+      }
+      
+      .rp-minimized {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        border-radius: 50px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        transition: all 0.3s ease;
+        position: fixed;
+        z-index: 999998;
+      }
+      
+      .rp-minimized.rp-position-bottom-right { bottom: 20px; right: 20px; }
+      .rp-minimized.rp-position-bottom-left { bottom: 20px; left: 20px; }
+      .rp-minimized.rp-position-top-right { top: 20px; right: 20px; }
+      .rp-minimized.rp-position-top-left { top: 20px; left: 20px; }
+      
+      .rp-minimized:hover {
+        transform: translateY(-2px) scale(1.05);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+      }
+      
+      .rp-minimized .rp-mini-value {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-weight: 700;
+        display: none;
+      }
     </style>
   {% endif %}
 {% endif %}
@@ -271,7 +339,7 @@
       "type": "checkbox",
       "id": "show_minimized",
       "label": "Show Minimized Button",
-      "default": false,
+      "default": true,
       "info": "Shows a small button when widget is closed"
     }
   ]
