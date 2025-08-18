@@ -1,8 +1,4 @@
 <!-- extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
-{% comment %} 
-  Fixed version with better customer detection
-{% endcomment %}
-
 {% if block.settings.enabled %}
   <div id="rewardspro-widget-{{ block.id }}" 
        class="rewardspro-widget rp-position-{{ block.settings.position }}"
@@ -10,15 +6,12 @@
        data-block-id="{{ block.id }}">
     
     <div class="rp-content">
-      <!-- JavaScript will fill this based on login status -->
-      <!-- Initial loading state or login prompt based on customer status -->
       {% if customer %}
         <div class="rp-loading">
           <div class="rp-spinner"></div>
           <p>Loading your rewards...</p>
         </div>
       {% else %}
-        <!-- Show login prompt immediately for non-logged-in users -->
         <div class="rp-login-prompt">
           <div class="rp-login-icon">🎁</div>
           <h3>Join Our Rewards Program!</h3>
@@ -66,10 +59,8 @@
     {% endif %}
   </div>
 
-  {% comment %} Pass customer context to JavaScript {% endcomment %}
   <script>
     (function() {
-      // Store customer context for JavaScript to use
       window.RewardsProContext = window.RewardsProContext || {};
       window.RewardsProContext['{{ block.id }}'] = {
         blockId: {{ block.id | json }},
@@ -79,32 +70,17 @@
           isLoggedIn: true,
           customerId: {{ customer.id | json }},
           customerEmail: {{ customer.email | json }},
-          customerName: {{ customer.first_name | default: customer.email | json }},
+          customerName: {{ customer.first_name | default: customer.email | json }}
         {% else %}
           isLoggedIn: false,
           customerId: null,
           customerEmail: null,
-          customerName: null,
+          customerName: null
         {% endif %}
-        settings: {
-          position: {{ block.settings.position | json }},
-          showMinimized: {{ block.settings.show_minimized | json }}
-        },
-        debug: {{ block.settings.debug_mode | default: false | json }}
       };
-      
-      {% if block.settings.debug_mode %}
-        console.log('[RewardsPro] Widget context:', window.RewardsProContext['{{ block.id }}']);
-        {% if customer %}
-          console.log('[RewardsPro] Customer is logged in:', {{ customer.id | json }});
-        {% else %}
-          console.log('[RewardsPro] Customer is NOT logged in');
-        {% endif %}
-      {% endif %}
     })();
   </script>
 
-  {% comment %} Optional: Add minimal inline styles for initial load {% endcomment %}
   {% if block.settings.inline_critical_css %}
     <style>
       #rewardspro-widget-{{ block.id }} {
@@ -120,6 +96,16 @@
       
       #rewardspro-widget-{{ block.id }}.rp-position-bottom-left {
         bottom: 20px;
+        left: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-top-right {
+        top: 20px;
+        right: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-top-left {
+        top: 20px;
         left: 20px;
       }
       
@@ -148,22 +134,25 @@
         animation: spin 1s linear infinite;
       }
       
-      /* Login prompt styles for immediate display */
       #rewardspro-widget-{{ block.id }} .rp-login-prompt {
-        padding: 32px;
+        padding: 12px;
         text-align: center;
       }
       
       #rewardspro-widget-{{ block.id }} .rp-login-icon {
         font-size: 48px;
         margin-bottom: 16px;
+        animation: bounce 2s infinite;
       }
       
       #rewardspro-widget-{{ block.id }} .rp-login-prompt h3 {
         margin: 0 0 12px 0;
         font-size: 24px;
         font-weight: 700;
-        color: #1a1a1a;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
       }
       
       #rewardspro-widget-{{ block.id }} .rp-benefits {
@@ -208,15 +197,31 @@
         box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
       }
       
+      #rewardspro-widget-{{ block.id }} .rp-btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+      }
+      
       #rewardspro-widget-{{ block.id }} .rp-btn-secondary {
         background: white;
         color: #667eea;
         border: 2px solid #667eea;
       }
       
+      #rewardspro-widget-{{ block.id }} .rp-btn-secondary:hover {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-color: transparent;
+      }
+      
       @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
+      }
+      
+      @keyframes bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
       }
     </style>
   {% endif %}
@@ -238,13 +243,6 @@
       "id": "enabled",
       "label": "Enable Widget",
       "default": true
-    },
-    {
-      "type": "checkbox",
-      "id": "debug_mode",
-      "label": "Debug Mode",
-      "default": false,
-      "info": "Shows additional debug information in console"
     },
     {
       "type": "checkbox",

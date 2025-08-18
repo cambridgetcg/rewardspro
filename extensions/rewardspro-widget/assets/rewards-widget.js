@@ -1,46 +1,38 @@
 // extensions/rewardspro-widget/assets/rewards-widget.js
-// Fixed version with better error handling and login detection
-
 class RewardsWidget {
   constructor(container) {
     this.container = container;
     this.id = container?.id || 'rewards-widget';
     this.contentEl = container?.querySelector('.rp-content') || container;
-    this.config = {
-      debug: false,  // Set to false for production
-      retryAttempts: 3,
-      retryDelay: 1000
-    };
-    
-    // Check if we have customer context from Liquid
+    this.retryAttempts = 3;
+    this.retryDelay = 1000;
     this.context = this.getContextFromLiquid();
     
-    console.log(`[RewardsWidget ${this.id}] Initializing...`);
     this.init();
   }
 
   getContextFromLiquid() {
-    // Try to get context from the Liquid template
     const blockId = this.container?.dataset?.blockId;
     if (window.RewardsProContext && blockId) {
       return window.RewardsProContext[blockId];
     }
-    // Fallback: try to detect if Shopify customer is logged in
+    
+    // Fallback: detect Shopify customer
     return {
       isLoggedIn: typeof window.ShopifyAnalytics?.meta?.page?.customerId === 'number',
-      customerId: window.ShopifyAnalytics?.meta?.page?.customerId || null
+      customerId: window.ShopifyAnalytics?.meta?.page?.customerId || null,
+      shopDomain: window.Shopify?.shop || null
     };
   }
 
   async init() {
-    // If we know the customer is not logged in from Liquid context, show login prompt immediately
+    // If customer is not logged in, show login prompt immediately
     if (this.context && this.context.isLoggedIn === false) {
-      console.log('[RewardsWidget] Customer not logged in (detected from context) - showing login prompt');
       this.showLoginPrompt();
       return;
     }
     
-    // Show loading state
+    // Show loading state while fetching data
     this.showLoading();
     
     // Fetch customer data
@@ -51,8 +43,6 @@ class RewardsWidget {
     try {
       const url = '/apps/rewardspro/membership';
       
-      console.log(`[RewardsWidget] Fetching customer data (attempt ${attempt})...`);
-      
       const response = await fetch(url, {
         method: 'GET',
         credentials: 'same-origin',
@@ -62,100 +52,72 @@ class RewardsWidget {
         }
       });
 
-      console.log('[RewardsWidget] Response status:', response.status);
-      
-      // Check if response is JSON before trying to parse
+      // Check if response is JSON
       const contentType = response.headers.get('content-type');
       const isJson = contentType && contentType.includes('application/json');
       
       if (!isJson) {
-        console.warn('[RewardsWidget] Response is not JSON, likely HTML error page or app proxy not configured');
-        console.log('[RewardsWidget] Content-Type:', contentType);
-        
-        // If we get HTML back, it's likely the app proxy isn't configured
-        // or the user is not logged in - show login prompt as fallback
-        if (response.status === 404 || response.status === 401 || !this.context?.isLoggedIn) {
-          console.log('[RewardsWidget] Showing login prompt due to non-JSON response');
-          this.showLoginPrompt();
-          return;
-        }
-        
-        throw new Error('Invalid response format - expected JSON but got ' + (contentType || 'unknown'));
+        // Non-JSON response usually means app proxy not configured or user not logged in
+        this.showLoginPrompt();
+        return;
       }
 
-      // Now safe to parse JSON
+      // Parse JSON response
       let data;
       try {
         data = await response.json();
       } catch (jsonError) {
-        console.error('[RewardsWidget] Failed to parse JSON:', jsonError);
-        // If JSON parsing fails but we expected JSON, show login prompt as safe fallback
         this.showLoginPrompt();
         return;
       }
       
-      console.log('[RewardsWidget] Received data:', data);
-      
-      // Check if user is not logged in (this is not an error!)
-      if (data.requiresLogin || data.error === "Not logged in" || data.error === "Missing customer parameter") {
-        console.log('[RewardsWidget] Customer not logged in - showing login prompt');
+      // Check if login is required
+      if (data.requiresLogin === true) {
         this.showLoginPrompt();
         return;
       }
       
-      // Check for actual errors
-      if (!response.ok && response.status !== 401) {
-        throw new Error(data.error || `HTTP ${response.status}`);
+      // Check for errors that indicate login is needed
+      if (data.error && (
+        data.error.toLowerCase().includes('not logged in') ||
+        data.error.toLowerCase().includes('missing customer') ||
+        data.error.toLowerCase().includes('auth')
+      )) {
+        this.showLoginPrompt();
+        return;
       }
       
-      // Success - show the data
+      // Handle successful response
       if (data.success) {
         this.updateWidgetData(data);
-      } else if (data.error) {
-        // If there's an error but it might be login-related, show login prompt
-        if (data.error.toLowerCase().includes('login') || 
-            data.error.toLowerCase().includes('customer') ||
-            data.error.toLowerCase().includes('auth')) {
-          this.showLoginPrompt();
-          return;
-        }
-        throw new Error(data.error);
+        return;
       }
       
-    } catch (error) {
-      console.error(`[RewardsWidget] Error on attempt ${attempt}:`, error);
+      // Handle other errors with retry
+      throw new Error(data.error || `HTTP ${response.status}`);
       
-      // If it's a network error or similar, and we're not logged in, show login prompt
-      if (!this.context?.isLoggedIn) {
-        console.log('[RewardsWidget] Error occurred and customer not logged in - showing login prompt');
+    } catch (error) {
+      // Check if we should show login prompt
+      if (!this.context?.isLoggedIn || 
+          error.message.includes('404') || 
+          error.message.includes('401')) {
         this.showLoginPrompt();
         return;
       }
       
-      // Retry logic for actual errors (not login issues)
-      if (attempt < this.config.retryAttempts) {
-        console.log(`[RewardsWidget] Retrying in ${this.config.retryDelay}ms...`);
+      // Retry logic for actual errors
+      if (attempt < this.retryAttempts) {
         setTimeout(() => {
           this.fetchCustomerData(attempt + 1);
-        }, this.config.retryDelay);
+        }, this.retryDelay);
       } else {
-        // Final fallback - if all retries failed and we can't determine login status, 
-        // show login prompt instead of error
-        if (error.message.includes('Invalid response format') || 
-            error.message.includes('404') || 
-            error.message.includes('Failed to fetch')) {
-          console.log('[RewardsWidget] Showing login prompt as final fallback');
-          this.showLoginPrompt();
-        } else {
-          this.showError(`Unable to load rewards. Please try again later.`);
-        }
+        // Final fallback - show login prompt
+        this.showLoginPrompt();
       }
     }
   }
 
   updateWidgetData(data) {
-    console.log('[RewardsWidget] Updating widget with data:', data);
-    
     if (!data || !data.success) {
       this.showError('Invalid data received');
       return;
@@ -194,15 +156,9 @@ class RewardsWidget {
           ` : ''}
         </div>
         
-        ${this.config.debug && data.debug ? `
-        <div class="rp-debug-info">
-          <strong>Debug Info:</strong><br>
-          Database Connected: ${data.debug.databaseConnected ? '✅' : '❌'}<br>
-          Customer UUID: ${data.debug.customerId || 'N/A'}<br>
-          Last Synced: ${data.balance?.lastSynced ? new Date(data.balance.lastSynced).toLocaleString() : 'Never'}<br>
-          Created: ${data.debug?.createdAt ? new Date(data.debug.createdAt).toLocaleString() : 'Unknown'}
+        <div class="rp-actions">
+          <a href="/account" class="rp-action-link">View Account →</a>
         </div>
-        ` : ''}
       </div>
     `;
     
@@ -211,7 +167,7 @@ class RewardsWidget {
   }
 
   updatePageElements(data) {
-    // Update any elements on the page with data attributes
+    // Update any elements on the page with rewards data
     const creditElements = document.querySelectorAll('[data-rewards-credit]');
     creditElements.forEach(el => {
       el.textContent = `$${(data.balance?.storeCredit || 0).toFixed(2)}`;
@@ -220,6 +176,11 @@ class RewardsWidget {
     const tierElements = document.querySelectorAll('[data-rewards-tier]');
     tierElements.forEach(el => {
       el.textContent = data.membership?.tier?.name || 'Bronze';
+    });
+    
+    const cashbackElements = document.querySelectorAll('[data-rewards-cashback]');
+    cashbackElements.forEach(el => {
+      el.textContent = `${data.membership?.tier?.cashbackPercent || 1}%`;
     });
   }
 
@@ -280,107 +241,29 @@ class RewardsWidget {
         <h3>Unable to Load Rewards</h3>
         <p>${message}</p>
         <button onclick="location.reload()" class="rp-retry-btn">Retry</button>
-        
-        ${this.config.debug ? `
-        <div class="rp-debug-info">
-          <strong>Debug Info:</strong><br>
-          Error occurred at: ${new Date().toLocaleTimeString()}<br>
-          Widget ID: ${this.id}<br>
-          Page URL: ${window.location.href}
-        </div>
-        ` : ''}
       </div>
     `;
     this.contentEl.innerHTML = errorHtml;
-  }
-
-  // Utility method for manual testing
-  async debugTest() {
-    const endpoints = [
-      '/apps/rewardspro/test',
-      '/apps/rewardspro/membership'
-    ];
-
-    console.log('[RewardsWidget] Starting debug test...');
-    
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`[Debug] Testing ${endpoint}...`);
-        const response = await fetch(endpoint, {
-          credentials: 'same-origin'
-        });
-        
-        const contentType = response.headers.get('content-type');
-        console.log(`[Debug] ${endpoint} Content-Type:`, contentType);
-        
-        if (contentType && contentType.includes('application/json')) {
-          const data = await response.json();
-          console.log(`[Debug] ${endpoint}:`, {
-            status: response.status,
-            ok: response.ok,
-            data: data
-          });
-        } else {
-          const text = await response.text();
-          console.log(`[Debug] ${endpoint} returned non-JSON:`, {
-            status: response.status,
-            contentType: contentType,
-            preview: text.substring(0, 200)
-          });
-        }
-      } catch (error) {
-        console.error(`[Debug] ${endpoint} failed:`, error);
-      }
-    }
-    
-    console.log('[RewardsWidget] Debug test complete');
   }
 }
 
 // Initialize widgets when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('[RewardsWidget] DOM Content Loaded');
-  
-  // Initialize all widgets with data attribute
+  // Find all widget containers
   const containers = document.querySelectorAll('[data-rewards-widget]');
-  console.log(`[RewardsWidget] Found ${containers.length} widget container(s)`);
   
-  containers.forEach((container, index) => {
-    console.log(`[RewardsWidget] Initializing widget ${index + 1}`);
-    const widget = new RewardsWidget(container);
-    
-    // Store widget instance for debugging
-    if (!window.RewardsWidgets) {
-      window.RewardsWidgets = [];
-    }
-    window.RewardsWidgets.push(widget);
+  containers.forEach((container) => {
+    new RewardsWidget(container);
   });
   
   // Also check for legacy selectors
   const legacyContainers = document.querySelectorAll('.rewardspro-widget');
   legacyContainers.forEach((container) => {
     if (!container.hasAttribute('data-rewards-widget')) {
-      console.log('[RewardsWidget] Found legacy container, initializing...');
-      const widget = new RewardsWidget(container);
-      if (!window.RewardsWidgets) {
-        window.RewardsWidgets = [];
-      }
-      window.RewardsWidgets.push(widget);
+      new RewardsWidget(container);
     }
   });
 });
 
-// Global access for debugging
-if (typeof window.RewardsWidget === 'undefined') {
-  window.RewardsWidget = RewardsWidget;
-  
-  // Add debug helper
-  window.debugRewards = () => {
-    console.log('[Debug] Available widgets:', window.RewardsWidgets);
-    if (window.RewardsWidgets && window.RewardsWidgets[0]) {
-      window.RewardsWidgets[0].debugTest();
-    }
-  };
-  
-  console.log('[RewardsWidget] Widget class loaded. Use window.debugRewards() to test endpoints.');
-}
+// Export for global access if needed
+window.RewardsWidget = RewardsWidget;
