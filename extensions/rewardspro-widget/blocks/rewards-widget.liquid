@@ -1,9 +1,4 @@
-<!-- extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
-{% comment %} 
-  RewardsPro Widget Block
-  This widget displays customer rewards information via app proxy
-{% endcomment %}
-
+<!-- extensions/rewardspro-theme-extension/blocks/rewards-widget.liquid -->
 {% if block.settings.enabled %}
   <div id="rewardspro-widget-{{ block.id }}" 
        class="rewardspro-widget rp-position-{{ block.settings.position }}"
@@ -16,97 +11,27 @@
         <p>Loading rewards...</p>
       </div>
     </div>
-    
-    {% if block.settings.show_minimized %}
-      <button class="rp-minimized" aria-label="Open rewards" style="display: none;">
-        <span class="rp-icon">🎁</span>
-        <span class="rp-text">Rewards</span>
-        <span class="rp-mini-value" data-rewards-credit>$0</span>
-      </button>
-    {% endif %}
   </div>
 
-  {% comment %} Initialize widget with customer context {% endcomment %}
   <script>
     (function() {
-      // Store customer context for debugging
       window.RewardsProContext = window.RewardsProContext || {};
       window.RewardsProContext['{{ block.id }}'] = {
         blockId: {{ block.id | json }},
         shopDomain: {{ shop.domain | json }},
-        shopName: {{ shop.name | json }},
         {% if customer %}
           isLoggedIn: true,
           customerId: {{ customer.id | json }},
           customerEmail: {{ customer.email | json }},
-          customerName: {{ customer.first_name | default: customer.email | json }},
-          customerTags: {{ customer.tags | json }},
         {% else %}
           isLoggedIn: false,
         {% endif %}
         settings: {
-          position: {{ block.settings.position | json }},
-          showMinimized: {{ block.settings.show_minimized | json }},
-          autoOpen: {{ block.settings.auto_open | json }},
-          dashboardUrl: {{ block.settings.dashboard_url | json }}
-        },
-        debug: {{ block.settings.debug_mode | default: false | json }}
+          position: {{ block.settings.position | json }}
+        }
       };
-      
-      {% if block.settings.debug_mode %}
-        console.log('[RewardsPro] Widget context initialized:', window.RewardsProContext['{{ block.id }}']);
-      {% endif %}
     })();
   </script>
-
-  {% comment %} Optional: Add inline styles for critical rendering {% endcomment %}
-  {% if block.settings.inline_critical_css %}
-    <style>
-      #rewardspro-widget-{{ block.id }} {
-        position: fixed;
-        z-index: 999999;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      }
-      
-      #rewardspro-widget-{{ block.id }}.rp-position-bottom-right {
-        bottom: 20px;
-        right: 20px;
-      }
-      
-      #rewardspro-widget-{{ block.id }}.rp-position-bottom-left {
-        bottom: 20px;
-        left: 20px;
-      }
-      
-      #rewardspro-widget-{{ block.id }} .rp-content {
-        background: white;
-        border-radius: 12px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-        padding: 20px;
-        min-width: 320px;
-      }
-      
-      #rewardspro-widget-{{ block.id }} .rp-loading {
-        text-align: center;
-        color: #666;
-      }
-      
-      #rewardspro-widget-{{ block.id }} .rp-spinner {
-        width: 40px;
-        height: 40px;
-        margin: 0 auto 10px;
-        border: 3px solid #f3f3f3;
-        border-top: 3px solid #007bff;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-      }
-      
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-    </style>
-  {% endif %}
 {% endif %}
 
 {% schema %}
@@ -117,32 +42,10 @@
   "javascript": "rewards-widget.js",
   "settings": [
     {
-      "type": "header",
-      "content": "Widget Settings"
-    },
-    {
       "type": "checkbox",
       "id": "enabled",
       "label": "Enable Widget",
       "default": true
-    },
-    {
-      "type": "checkbox",
-      "id": "debug_mode",
-      "label": "Debug Mode",
-      "default": false,
-      "info": "Shows additional debug information in console"
-    },
-    {
-      "type": "checkbox",
-      "id": "inline_critical_css",
-      "label": "Inline Critical CSS",
-      "default": true,
-      "info": "Includes critical styles inline for faster rendering"
-    },
-    {
-      "type": "header",
-      "content": "Display Options"
     },
     {
       "type": "select",
@@ -155,40 +58,6 @@
         {"value": "top-left", "label": "Top Left"}
       ],
       "default": "bottom-right"
-    },
-    {
-      "type": "checkbox",
-      "id": "show_minimized",
-      "label": "Show Minimized Button",
-      "default": true,
-      "info": "Shows a small button when widget is closed"
-    },
-    {
-      "type": "checkbox",
-      "id": "auto_open",
-      "label": "Auto Open on Load",
-      "default": false,
-      "info": "Automatically opens the widget when page loads"
-    },
-    {
-      "type": "header",
-      "content": "Links"
-    },
-    {
-      "type": "url",
-      "id": "dashboard_url",
-      "label": "Dashboard URL",
-      "default": "/pages/rewards",
-      "info": "Link to full rewards dashboard"
-    }
-  ],
-  "presets": [
-    {
-      "name": "Rewards Widget",
-      "settings": {
-        "enabled": true,
-        "position": "bottom-right"
-      }
     }
   ]
 }

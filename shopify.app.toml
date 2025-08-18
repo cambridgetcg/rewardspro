@@ -36,3 +36,9 @@ redirect_urls = [
 
 [pos]
 embedded = false
+
+# ADD THIS SECTION - THIS IS WHAT'S MISSING!
+[app_proxy]
+url = "https://rewardspro.vercel.app/api/proxy"
+subpath = "rewardspro"
+prefix = "apps"
