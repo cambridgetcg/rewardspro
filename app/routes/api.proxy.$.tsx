@@ -5,6 +5,7 @@ import prisma from "../db.server";
 
 /**
  * Validates the Shopify app proxy signature
+ * Uses the app's Client Secret (API Secret) from Partners Dashboard
  */
 function validateProxySignature(
   queryParams: URLSearchParams,
@@ -20,13 +21,13 @@ function validateProxySignature(
   const paramsToValidate = new URLSearchParams(queryParams);
   paramsToValidate.delete("signature");
   
-  // Sort and concatenate parameters
+  // Sort and concatenate parameters (must handle empty values correctly)
   const sortedParams = Array.from(paramsToValidate.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
     .join("");
 
-  // Calculate HMAC
+  // Calculate HMAC using the Client Secret
   const calculatedSignature = crypto
     .createHmac("sha256", secret)
     .update(sortedParams)
@@ -39,6 +40,8 @@ function validateProxySignature(
   );
 
   console.log("[Proxy] Signature validation:", isValid);
+  console.log("[Proxy] Expected:", calculatedSignature);
+  console.log("[Proxy] Received:", signature);
   return isValid;
 }
 
@@ -103,18 +106,19 @@ async function handleMembershipRequest(
   const shop = queryParams.get("shop");
   const customerId = queryParams.get("logged_in_customer_id");
   
-  // Validate proxy signature
-  const APP_PROXY_SECRET = process.env.SHOPIFY_APP_PROXY_SECRET;
+  // Validate proxy signature using the Client Secret (API Secret)
+  // This is the same secret used for OAuth and Admin API
+  const CLIENT_SECRET = process.env.SHOPIFY_API_SECRET;
   
-  if (!APP_PROXY_SECRET) {
-    console.error("[Proxy] Missing SHOPIFY_APP_PROXY_SECRET");
+  if (!CLIENT_SECRET) {
+    console.error("[Proxy] Missing SHOPIFY_API_SECRET");
     return json({
       error: "Server configuration error",
-      message: "Proxy secret not configured"
+      message: "Client secret not configured"
     }, { status: 500, headers });
   }
   
-  if (!validateProxySignature(queryParams, APP_PROXY_SECRET)) {
+  if (!validateProxySignature(queryParams, CLIENT_SECRET)) {
     return json({
       error: "Invalid signature",
       message: "Request signature validation failed"
