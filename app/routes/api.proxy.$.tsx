@@ -1,8 +1,8 @@
 // app/routes/api.proxy.$.tsx
-// Uses your existing db.server.ts to connect to Supabase
+// Updated version with better handling for non-logged-in users
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import prisma from "../db.server";  // Your existing db.server file
+import prisma from "../db.server";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const proxyPath = params["*"] || "";
@@ -10,13 +10,22 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   
   console.log("Proxy path:", proxyPath);
   
+  // Set CORS headers for all responses
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Content-Type": "application/json",
+    "Cache-Control": "no-cache, no-store, must-revalidate"
+  };
+  
   // Test endpoint (no database)
   if (proxyPath === "test") {
     return json({
       success: true,
       message: "Proxy works!",
       path: proxyPath
-    });
+    }, { headers });
   }
   
   // Membership endpoint - USES YOUR REAL DATABASE
@@ -26,17 +35,40 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     
     console.log("Membership request - Customer:", customerId, "Shop:", shop);
     
-    if (!customerId) {
+    // Handle non-logged-in users gracefully
+    if (!customerId || customerId === "") {
+      console.log("No customer ID - user not logged in");
+      // Return 200 with requiresLogin flag (not an error!)
       return json({
-        error: "Not logged in",
-        requiresLogin: true
+        success: false,
+        requiresLogin: true,
+        message: "Please log in to view your rewards",
+        // Include empty data structure so widget doesn't break
+        customer: null,
+        balance: {
+          storeCredit: 0,
+          totalEarned: 0,
+          lastSynced: null
+        },
+        membership: {
+          tier: {
+            id: "guest",
+            name: "Guest",
+            cashbackPercent: 1
+          }
+        }
+      }, { 
+        status: 200,  // Return 200, not 401, since this is expected behavior
+        headers 
       });
     }
     
     if (!shop) {
       return json({
-        error: "Missing shop parameter"
-      }, { status: 400 });
+        success: false,
+        error: "Missing shop parameter",
+        message: "Invalid request - shop parameter required"
+      }, { status: 400, headers });
     }
     
     try {
@@ -150,19 +182,21 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         debug: {
           databaseConnected: true,
           customerId: customer.id,
-          createdAt: customer.createdAt
+          createdAt: customer.createdAt,
+          shopDomain: shop
         }
-      });
+      }, { headers });
       
     } catch (error) {
       console.error("❌ Database error:", error);
       
       // Return error but with fallback data so widget doesn't break
       return json({
+        success: false,
         error: "Database connection failed",
         details: error instanceof Error ? error.message : "Unknown error",
-        success: false,
-        // Fallback data
+        message: "Unable to load rewards data",
+        // Fallback data structure
         customer: {
           id: "error",
           shopifyId: customerId,
@@ -170,22 +204,26 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         },
         balance: { 
           storeCredit: 0, 
-          totalEarned: 0 
+          totalEarned: 0,
+          lastSynced: null
         },
         membership: { 
           tier: { 
+            id: "error",
             name: "Bronze", 
             cashbackPercent: 1 
           }
         }
-      }, { status: 500 });
+      }, { status: 500, headers });
     }
   }
   
   // Default 404 for unknown paths
   return json({
+    success: false,
     error: "Not found",
+    message: `Endpoint '${proxyPath}' not found`,
     path: proxyPath,
     availablePaths: ["test", "membership"]
-  }, { status: 404 });
+  }, { status: 404, headers });
 }
