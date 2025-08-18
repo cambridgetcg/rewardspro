@@ -1,4 +1,8 @@
-<!-- extensions/rewardspro-theme-extension/blocks/rewards-widget.liquid -->
+<!-- extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
+{% comment %} 
+  Simplified version - Let JavaScript handle login/logout states
+{% endcomment %}
+
 {% if block.settings.enabled %}
   <div id="rewardspro-widget-{{ block.id }}" 
        class="rewardspro-widget rp-position-{{ block.settings.position }}"
@@ -6,32 +10,103 @@
        data-block-id="{{ block.id }}">
     
     <div class="rp-content">
-      <!-- Content will be loaded via JavaScript -->
+      <!-- JavaScript will fill this based on login status -->
+      <!-- Initial loading state -->
       <div class="rp-loading">
+        <div class="rp-spinner"></div>
         <p>Loading rewards...</p>
       </div>
     </div>
+    
+    {% if block.settings.show_minimized %}
+      <button class="rp-minimized" aria-label="Open rewards" style="display: none;">
+        <span class="rp-icon">🎁</span>
+        <span class="rp-text">Rewards</span>
+        <span class="rp-mini-value" data-rewards-credit>$0</span>
+      </button>
+    {% endif %}
   </div>
 
+  {% comment %} Pass customer context to JavaScript {% endcomment %}
   <script>
     (function() {
+      // Store customer context for JavaScript to use
       window.RewardsProContext = window.RewardsProContext || {};
       window.RewardsProContext['{{ block.id }}'] = {
         blockId: {{ block.id | json }},
         shopDomain: {{ shop.domain | json }},
+        shopName: {{ shop.name | json }},
         {% if customer %}
           isLoggedIn: true,
           customerId: {{ customer.id | json }},
           customerEmail: {{ customer.email | json }},
+          customerName: {{ customer.first_name | default: customer.email | json }},
         {% else %}
           isLoggedIn: false,
         {% endif %}
         settings: {
-          position: {{ block.settings.position | json }}
-        }
+          position: {{ block.settings.position | json }},
+          showMinimized: {{ block.settings.show_minimized | json }}
+        },
+        debug: {{ block.settings.debug_mode | default: false | json }}
       };
+      
+      {% if block.settings.debug_mode %}
+        console.log('[RewardsPro] Widget context:', window.RewardsProContext['{{ block.id }}']);
+      {% endif %}
     })();
   </script>
+
+  {% comment %} Optional: Add minimal inline styles for initial load {% endcomment %}
+  {% if block.settings.inline_critical_css %}
+    <style>
+      #rewardspro-widget-{{ block.id }} {
+        position: fixed;
+        z-index: 999999;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-bottom-right {
+        bottom: 20px;
+        right: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-bottom-left {
+        bottom: 20px;
+        left: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-content {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        padding: 20px;
+        min-width: 320px;
+        max-width: 400px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-loading {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-spinner {
+        width: 40px;
+        height: 40px;
+        margin: 0 auto 10px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #667eea;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  {% endif %}
 {% endif %}
 
 {% schema %}
@@ -42,10 +117,32 @@
   "javascript": "rewards-widget.js",
   "settings": [
     {
+      "type": "header",
+      "content": "Widget Settings"
+    },
+    {
       "type": "checkbox",
       "id": "enabled",
       "label": "Enable Widget",
       "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "debug_mode",
+      "label": "Debug Mode",
+      "default": false,
+      "info": "Shows additional debug information in console"
+    },
+    {
+      "type": "checkbox",
+      "id": "inline_critical_css",
+      "label": "Inline Critical CSS",
+      "default": true,
+      "info": "Includes critical styles inline for faster rendering"
+    },
+    {
+      "type": "header",
+      "content": "Display Options"
     },
     {
       "type": "select",
@@ -58,6 +155,13 @@
         {"value": "top-left", "label": "Top Left"}
       ],
       "default": "bottom-right"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_minimized",
+      "label": "Show Minimized Button",
+      "default": false,
+      "info": "Shows a small button when widget is closed"
     }
   ]
 }
