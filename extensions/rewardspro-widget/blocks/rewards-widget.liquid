@@ -1,107 +1,112 @@
-<!-- File: extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
-{% comment %} Simple rewards widget that works {% endcomment %}
+<!-- extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
+{% comment %} 
+  RewardsPro Widget Block
+  This widget displays customer rewards information via app proxy
+{% endcomment %}
 
 {% if block.settings.enabled %}
   <div id="rewardspro-widget-{{ block.id }}" 
-       class="rewardspro-widget" 
-       data-block-id="{{ block.id }}"
-       data-position="{{ block.settings.position }}">
+       class="rewardspro-widget rp-position-{{ block.settings.position }}"
+       data-rewards-widget
+       data-block-id="{{ block.id }}">
     
-    {% comment %} Server-side customer detection {% endcomment %}
-    {% if customer %}
-      {% comment %} Customer is logged in - show member content {% endcomment %}
-      <div class="rp-content rp-member">
-        <div class="rp-header">
-          <span class="rp-title">{{ block.settings.widget_title }}</span>
-          <button class="rp-close" aria-label="Close">&times;</button>
-        </div>
-        
-        <div class="rp-body">
-          <div class="rp-welcome">
-            Welcome back, {{ customer.first_name | default: "Member" }}!
-          </div>
-          
-          {% comment %} Debug info - Customer ID display {% endcomment %}
-          <div style="padding: 10px; background: #f0f0f0; border-radius: 5px; margin-bottom: 10px; font-size: 12px;">
-            <strong>Debug Info:</strong><br>
-            Customer ID: <code id="debug-customer-id">{{ customer.id }}</code><br>
-            Email: <code>{{ customer.email }}</code><br>
-            <span id="debug-api-status" style="color: #666;">API Status: Waiting...</span>
-          </div>
-          
-          <div class="rp-info">
-            <div class="rp-balance">
-              <span class="rp-label">{{ block.settings.credit_label }}</span>
-              <span class="rp-value" data-credit="0">$0.00</span>
-            </div>
-            
-            <div class="rp-tier">
-              <span class="rp-label">Tier:</span>
-              <span class="rp-tier-name">Loading...</span>
-            </div>
-          </div>
-          
-          <div class="rp-actions">
-            <a href="{{ block.settings.dashboard_url }}" class="rp-btn rp-btn-primary">
-              {{ block.settings.dashboard_text }}
-            </a>
-          </div>
-        </div>
+    <div class="rp-content">
+      <!-- Content will be loaded via JavaScript -->
+      <div class="rp-loading">
+        <p>Loading rewards...</p>
       </div>
-      
-      {% comment %} Pass customer data to JavaScript {% endcomment %}
-      <script>
-        window.RewardsProData = window.RewardsProData || {};
-        window.RewardsProData['{{ block.id }}'] = {
+    </div>
+    
+    {% if block.settings.show_minimized %}
+      <button class="rp-minimized" aria-label="Open rewards" style="display: none;">
+        <span class="rp-icon">🎁</span>
+        <span class="rp-text">Rewards</span>
+        <span class="rp-mini-value" data-rewards-credit>$0</span>
+      </button>
+    {% endif %}
+  </div>
+
+  {% comment %} Initialize widget with customer context {% endcomment %}
+  <script>
+    (function() {
+      // Store customer context for debugging
+      window.RewardsProContext = window.RewardsProContext || {};
+      window.RewardsProContext['{{ block.id }}'] = {
+        blockId: {{ block.id | json }},
+        shopDomain: {{ shop.domain | json }},
+        shopName: {{ shop.name | json }},
+        {% if customer %}
+          isLoggedIn: true,
           customerId: {{ customer.id | json }},
           customerEmail: {{ customer.email | json }},
-          customerName: {{ customer.first_name | json }},
-          shopDomain: {{ shop.domain | json }},
-          apiEndpoint: {{ block.settings.api_endpoint | default: "https://rewardspro.vercel.app/apps/rewardspro/api" | json }},
-          blockId: {{ block.id | json }},
-          debug: true
-        };
-        console.log('RewardsProData initialized:', window.RewardsProData['{{ block.id }}']);
-      </script>
+          customerName: {{ customer.first_name | default: customer.email | json }},
+          customerTags: {{ customer.tags | json }},
+        {% else %}
+          isLoggedIn: false,
+        {% endif %}
+        settings: {
+          position: {{ block.settings.position | json }},
+          showMinimized: {{ block.settings.show_minimized | json }},
+          autoOpen: {{ block.settings.auto_open | json }},
+          dashboardUrl: {{ block.settings.dashboard_url | json }}
+        },
+        debug: {{ block.settings.debug_mode | default: false | json }}
+      };
       
-    {% else %}
-      {% comment %} Customer is not logged in - show guest content {% endcomment %}
-      <div class="rp-content rp-guest">
-        <div class="rp-header">
-          <span class="rp-title">{{ block.settings.widget_title }}</span>
-          <button class="rp-close" aria-label="Close">&times;</button>
-        </div>
-        
-        <div class="rp-body">
-          <p class="rp-message">{{ block.settings.guest_message }}</p>
-          
-          {% comment %} Debug info for guest {% endcomment %}
-          <div style="padding: 10px; background: #f0f0f0; border-radius: 5px; margin-bottom: 10px; font-size: 12px;">
-            <strong>Debug Info:</strong><br>
-            Status: Not logged in
-          </div>
-          
-          <div class="rp-actions">
-            <a href="{{ routes.account_register_url }}" class="rp-btn rp-btn-primary">
-              {{ block.settings.join_text }}
-            </a>
-            <a href="{{ routes.account_login_url }}" class="rp-btn rp-btn-secondary">
-              Sign In
-            </a>
-          </div>
-        </div>
-      </div>
-    {% endif %}
-    
-    {% comment %} Minimized button {% endcomment %}
-    <button class="rp-minimized" aria-label="Open rewards" style="display: none;">
-      <span class="rp-icon">🎁</span>
-      <span class="rp-text">Rewards</span>
-      {% if customer %}
-        <span class="rp-mini-value">$0</span>
+      {% if block.settings.debug_mode %}
+        console.log('[RewardsPro] Widget context initialized:', window.RewardsProContext['{{ block.id }}']);
       {% endif %}
-    </button>
-  </div>
+    })();
+  </script>
+
+  {% comment %} Optional: Add inline styles for critical rendering {% endcomment %}
+  {% if block.settings.inline_critical_css %}
+    <style>
+      #rewardspro-widget-{{ block.id }} {
+        position: fixed;
+        z-index: 999999;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-bottom-right {
+        bottom: 20px;
+        right: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-bottom-left {
+        bottom: 20px;
+        left: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-content {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        padding: 20px;
+        min-width: 320px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-loading {
+        text-align: center;
+        color: #666;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-spinner {
+        width: 40px;
+        height: 40px;
+        margin: 0 auto 10px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #007bff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  {% endif %}
 {% endif %}
 
 {% schema %}
@@ -112,46 +117,32 @@
   "javascript": "rewards-widget.js",
   "settings": [
     {
+      "type": "header",
+      "content": "Widget Settings"
+    },
+    {
       "type": "checkbox",
       "id": "enabled",
       "label": "Enable Widget",
       "default": true
     },
     {
-      "type": "text",
-      "id": "widget_title",
-      "label": "Widget Title",
-      "default": "Your Rewards"
+      "type": "checkbox",
+      "id": "debug_mode",
+      "label": "Debug Mode",
+      "default": false,
+      "info": "Shows additional debug information in console"
     },
     {
-      "type": "text",
-      "id": "credit_label",
-      "label": "Credit Label",
-      "default": "Store Credit:"
+      "type": "checkbox",
+      "id": "inline_critical_css",
+      "label": "Inline Critical CSS",
+      "default": true,
+      "info": "Includes critical styles inline for faster rendering"
     },
     {
-      "type": "textarea",
-      "id": "guest_message",
-      "label": "Guest Message",
-      "default": "Join our rewards program and earn cashback on every purchase!"
-    },
-    {
-      "type": "text",
-      "id": "join_text",
-      "label": "Join Button Text",
-      "default": "Join Now"
-    },
-    {
-      "type": "text",
-      "id": "dashboard_text",
-      "label": "Dashboard Button Text",
-      "default": "View Dashboard"
-    },
-    {
-      "type": "text",
-      "id": "dashboard_url",
-      "label": "Dashboard URL",
-      "default": "/pages/rewards"
+      "type": "header",
+      "content": "Display Options"
     },
     {
       "type": "select",
@@ -166,11 +157,38 @@
       "default": "bottom-right"
     },
     {
-      "type": "text",
-      "id": "api_endpoint",
-      "label": "API Endpoint",
-      "default": "https://rewardspro.vercel.app/apps/rewardspro/api",
-      "info": "Your Vercel app URL"
+      "type": "checkbox",
+      "id": "show_minimized",
+      "label": "Show Minimized Button",
+      "default": true,
+      "info": "Shows a small button when widget is closed"
+    },
+    {
+      "type": "checkbox",
+      "id": "auto_open",
+      "label": "Auto Open on Load",
+      "default": false,
+      "info": "Automatically opens the widget when page loads"
+    },
+    {
+      "type": "header",
+      "content": "Links"
+    },
+    {
+      "type": "url",
+      "id": "dashboard_url",
+      "label": "Dashboard URL",
+      "default": "/pages/rewards",
+      "info": "Link to full rewards dashboard"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Rewards Widget",
+      "settings": {
+        "enabled": true,
+        "position": "bottom-right"
+      }
     }
   ]
 }
