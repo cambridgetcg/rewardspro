@@ -30,6 +30,9 @@ export default function App() {
         <Link to="/app/dashboard">
           Dashboard
         </Link>
+        <Link to="/app/analytics">
+          Analytics
+        </Link>
         <Link to="/app/email/generator">
           Email Generator
         </Link>
