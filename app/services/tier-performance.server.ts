@@ -3,8 +3,9 @@ import { Tier } from "@prisma/client";
 
 export interface OptimizedTierData extends Tier {
   memberCount: number;
-  totalEarned: number;
-  percentageOfCustomers: number;
+  percentage: number;
+  avgLifetimeSpending: number;
+  avgYearlySpending: number;
 }
 
 // Optimized function with single query and aggregation
@@ -90,15 +91,73 @@ export async function getOptimizedTierDistribution(shopDomain: string): Promise<
     return tierEarningsMap;
   });
 
+  // Get average spending data for members in each tier
+  const tierSpendingData = await prisma.customerAnalytics.groupBy({
+    by: ['customerId'],
+    where: {
+      customer: {
+        shopDomain,
+        membershipHistory: {
+          some: {
+            isActive: true
+          }
+        }
+      }
+    },
+    _avg: {
+      lifetimeSpending: true,
+      yearlySpending: true
+    }
+  }).then(async (analytics) => {
+    // Map analytics to tiers
+    const customerTiers = await prisma.customerMembership.findMany({
+      where: { 
+        isActive: true,
+        customerId: { in: analytics.map(a => a.customerId) }
+      },
+      select: {
+        customerId: true,
+        tierId: true
+      }
+    });
+    
+    const tierAvgMap = new Map<string, { lifetime: number; yearly: number; count: number }>();
+    const customerTierMap = new Map(customerTiers.map(ct => [ct.customerId, ct.tierId]));
+    
+    analytics.forEach(analytic => {
+      const tierId = customerTierMap.get(analytic.customerId);
+      if (tierId) {
+        const current = tierAvgMap.get(tierId) || { lifetime: 0, yearly: 0, count: 0 };
+        tierAvgMap.set(tierId, {
+          lifetime: current.lifetime + (analytic._avg.lifetimeSpending || 0),
+          yearly: current.yearly + (analytic._avg.yearlySpending || 0),
+          count: current.count + 1
+        });
+      }
+    });
+    
+    return tierAvgMap;
+  });
+
   // Combine all data
-  const optimizedTiers: OptimizedTierData[] = tiers.map(tier => ({
-    ...tier,
-    memberCount: memberCountMap.get(tier.id) || 0,
-    totalEarned: tierEarnings.get(tier.id) || 0,
-    percentageOfCustomers: customerStats > 0 
-      ? ((memberCountMap.get(tier.id) || 0) / customerStats) * 100 
-      : 0
-  }));
+  const optimizedTiers: OptimizedTierData[] = tiers.map(tier => {
+    const spendingData = tierSpendingData.get(tier.id);
+    const memberCount = memberCountMap.get(tier.id) || 0;
+    
+    return {
+      ...tier,
+      memberCount,
+      percentage: customerStats > 0 
+        ? (memberCount / customerStats) * 100 
+        : 0,
+      avgLifetimeSpending: spendingData && spendingData.count > 0
+        ? spendingData.lifetime / spendingData.count
+        : 0,
+      avgYearlySpending: spendingData && spendingData.count > 0
+        ? spendingData.yearly / spendingData.count
+        : 0
+    };
+  });
 
   const activeTiers = tiers.filter(t => t.isActive).length;
   const totalMembers = Array.from(memberCountMap.values()).reduce((sum, count) => sum + count, 0);

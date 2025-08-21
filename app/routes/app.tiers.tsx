@@ -5,18 +5,31 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { useState, useEffect } from "react";
 import { EvaluationPeriod } from "@prisma/client";
-import { batchEvaluateCustomerTiers, handleExpiredMemberships } from "../services/customer-tier.server";
-import { getCachedTierDistribution, type OptimizedTierData } from "../services/tier-performance.server";
+import { getTierDistribution, batchEvaluateCustomerTiers, handleExpiredMemberships } from "../services/customer-tier.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   
-  // Use optimized and cached version
-  const data = await getCachedTierDistribution(session.shop);
+  // Use original function for now
+  const tierDistribution = await getTierDistribution(session.shop);
+
+  // Get total customers and total cashback earned
+  const [totalCustomers, totalCashback] = await Promise.all([
+    prisma.customer.count({ where: { shopDomain: session.shop } }),
+    prisma.cashbackTransaction.aggregate({
+      where: { shopDomain: session.shop },
+      _sum: { cashbackAmount: true }
+    })
+  ]);
 
   return json({ 
-    tiers: data.tiers,
-    stats: data.stats
+    tiers: tierDistribution || [],
+    stats: {
+      totalCustomers,
+      totalCashback: totalCashback._sum.cashbackAmount || 0,
+      activeTiers: tierDistribution ? tierDistribution.filter(t => t.isActive).length : 0,
+      totalMembers: tierDistribution ? tierDistribution.reduce((sum, t) => sum + t.memberCount, 0) : 0
+    }
   });
 }
 
@@ -564,7 +577,7 @@ export default function TierSettings() {
               </tr>
             </thead>
             <tbody>
-              {tiers.map((tier: OptimizedTierData) => (
+              {tiers.map((tier: any) => (
                 <tr key={tier.id}>
                   {editingTierId === tier.id ? (
                     <td colSpan={8} style={{ padding: 0 }}>
