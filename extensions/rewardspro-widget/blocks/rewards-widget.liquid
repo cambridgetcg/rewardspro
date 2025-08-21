@@ -249,6 +249,91 @@
         border-color: transparent;
       }
       
+      /* Tier Progress Bar */
+      #rewardspro-widget-{{ block.id }} .rp-tier-progress {
+        margin: 20px 0;
+        padding: 16px;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border-radius: 10px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #495057;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-percentage {
+        font-size: 14px;
+        font-weight: 700;
+        color: #667eea;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-bar {
+        width: 100%;
+        height: 24px;
+        background: rgba(255, 255, 255, 0.8);
+        border-radius: 12px;
+        overflow: hidden;
+        position: relative;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        border-radius: 12px;
+        transition: width 0.5s ease;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-details {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        font-size: 12px;
+        color: #6c757d;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-spent {
+        font-weight: 600;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-remaining {
+        color: #667eea;
+        font-weight: 600;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-progress-reward {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: white;
+        border-radius: 6px;
+        text-align: center;
+        font-size: 13px;
+        color: #495057;
+        font-weight: 600;
+        border: 1px solid rgba(102, 126, 234, 0.2);
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-max-tier-badge {
+        padding: 12px;
+        background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+        border-radius: 8px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 700;
+        color: #664d00;
+        box-shadow: 0 2px 8px rgba(255, 215, 0, 0.3);
+      }
+      
       .rp-minimized {
         display: flex;
         align-items: center;

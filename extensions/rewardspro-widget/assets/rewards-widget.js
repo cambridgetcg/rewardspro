@@ -212,13 +212,52 @@
         return;
       }
 
+      // Build progress bar HTML if tier progress exists
+      let progressBarHtml = '';
+      if (data.tierProgress) {
+        const progress = data.tierProgress;
+        const periodText = progress.evaluationPeriod === 'LIFETIME' ? 'lifetime' : 'annual';
+        
+        progressBarHtml = `
+          <div class="rp-tier-progress">
+            <div class="rp-progress-header">
+              <span class="rp-progress-title">Progress to ${progress.nextTierName}</span>
+              <span class="rp-progress-percentage">${Math.round(progress.progressPercentage)}%</span>
+            </div>
+            <div class="rp-progress-bar">
+              <div class="rp-progress-fill" style="width: ${progress.progressPercentage}%"></div>
+            </div>
+            <div class="rp-progress-details">
+              <div class="rp-progress-spent">
+                ${progress.currentSpending.toFixed(2)} / ${progress.requiredSpending.toFixed(2)} ${periodText}
+              </div>
+              <div class="rp-progress-remaining">
+                ${progress.remainingSpending.toFixed(2)} to go
+              </div>
+            </div>
+            <div class="rp-progress-reward">
+              🎯 Unlock ${progress.nextTierCashback}% cashback
+            </div>
+          </div>
+        `;
+      } else {
+        // Max tier reached
+        progressBarHtml = `
+          <div class="rp-tier-progress">
+            <div class="rp-max-tier-badge">
+              ⭐ You've reached the highest tier! ⭐
+            </div>
+          </div>
+        `;
+      }
+
       const html = `
         <div class="rp-customer-info">
           <h3>🎁 Your Rewards</h3>
           
           <div class="rp-stats-grid">
             <div class="rp-stat-card rp-stat-card-primary">
-              <div class="rp-stat-value">$${(data.balance?.storeCredit || 0).toFixed(2)}</div>
+              <div class="rp-stat-value">${(data.balance?.storeCredit || 0).toFixed(2)}</div>
               <div class="rp-stat-label">Store Credit</div>
             </div>
             
@@ -233,17 +272,12 @@
             </div>
             
             <div class="rp-stat-card">
-              <div class="rp-stat-value">$${(data.balance?.totalEarned || 0).toFixed(2)}</div>
+              <div class="rp-stat-value">${(data.balance?.totalEarned || 0).toFixed(2)}</div>
               <div class="rp-stat-label">Total Earned</div>
             </div>
           </div>
           
-          <div class="rp-customer-details">
-            <p class="rp-customer-id">Customer ID: ${data.customer?.shopifyId || 'Unknown'}</p>
-            ${data.customer?.memberSince ? `
-              <p class="rp-member-since">Member since: ${new Date(data.customer.memberSince).toLocaleDateString()}</p>
-            ` : ''}
-          </div>
+          ${progressBarHtml}
           
           <div class="rp-actions">
             <a href="/account" class="rp-action-link">View Account →</a>

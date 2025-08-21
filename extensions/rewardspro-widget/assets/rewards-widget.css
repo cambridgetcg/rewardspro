@@ -330,11 +330,103 @@
   color: #666;
 }
 
-.rp-customer-id,
-.rp-member-since {
-  margin: 4px 0;
-  font-family: 'Monaco', 'Courier New', monospace;
+/* ============================================
+   Tier Progress Bar
+   ============================================ */
+.rp-tier-progress {
+  margin: 20px 0;
+  padding: 16px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-radius: 10px;
+}
+
+.rp-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.rp-progress-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #495057;
+}
+
+.rp-progress-percentage {
+  font-size: 14px;
+  font-weight: 700;
+  color: #667eea;
+}
+
+.rp-progress-bar {
+  width: 100%;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.rp-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  transition: width 0.5s ease;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.rp-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.3) 0%, transparent 50%);
+  border-radius: 12px;
+}
+
+.rp-progress-details {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
   font-size: 12px;
+  color: #6c757d;
+}
+
+.rp-progress-spent {
+  font-weight: 600;
+}
+
+.rp-progress-remaining {
+  color: #667eea;
+  font-weight: 600;
+}
+
+.rp-progress-reward {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: white;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 13px;
+  color: #495057;
+  font-weight: 600;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.rp-max-tier-badge {
+  padding: 12px;
+  background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #664d00;
+  box-shadow: 0 2px 8px rgba(255, 215, 0, 0.3);
 }
 
 /* Actions */
