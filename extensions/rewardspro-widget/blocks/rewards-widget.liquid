@@ -1,50 +1,40 @@
 <!-- extensions/rewardspro-widget/blocks/rewards-widget.liquid -->
-{% comment %}
-  RewardsPro Widget - Production Version
-  Compatible with all modern browsers and Shopify themes
-{% endcomment %}
-
 {% if block.settings.enabled %}
-  <!-- Main Widget Container -->
   <div id="rewardspro-widget-{{ block.id }}" 
        class="rewardspro-widget rp-position-{{ block.settings.position }}"
        data-rewards-widget
        data-block-id="{{ block.id }}">
     
-    <!-- Close Button -->
     <button class="rp-close-btn" type="button" aria-label="Close rewards widget" title="Close">
       <span class="rp-close-icon" aria-hidden="true">&times;</span>
     </button>
     
-    <!-- Widget Content Area -->
     <div class="rp-content">
       {% if customer %}
-        <!-- Loading State for Logged-in Customers -->
         <div class="rp-loading">
           <div class="rp-spinner"></div>
           <p>Loading your rewards...</p>
         </div>
       {% else %}
-        <!-- Login Prompt for Non-logged-in Users -->
         <div class="rp-login-prompt">
-          <div class="rp-login-icon">{{ block.settings.icon_emoji | default: '🎁' }}</div>
-          <h3>{{ block.settings.login_heading | default: 'Join Our Rewards Program!' }}</h3>
+          <div class="rp-login-icon">🎁</div>
+          <h3>Join Our Rewards Program!</h3>
           <p class="rp-login-message">
-            {{ block.settings.login_message | default: 'Earn cashback on every purchase and unlock exclusive benefits as a member.' }}
+            Earn cashback on every purchase and unlock exclusive benefits as a member.
           </p>
           
           <div class="rp-benefits">
             <div class="rp-benefit">
               <span class="rp-benefit-icon">💰</span>
-              <span>{{ block.settings.benefit_1 | default: 'Earn cashback on all orders' }}</span>
+              <span>Earn cashback on all orders</span>
             </div>
             <div class="rp-benefit">
               <span class="rp-benefit-icon">⭐</span>
-              <span>{{ block.settings.benefit_2 | default: 'Unlock higher tier benefits' }}</span>
+              <span>Unlock higher tier benefits</span>
             </div>
             <div class="rp-benefit">
               <span class="rp-benefit-icon">🎯</span>
-              <span>{{ block.settings.benefit_3 | default: 'Get exclusive member offers' }}</span>
+              <span>Get exclusive member offers</span>
             </div>
           </div>
           
@@ -64,63 +54,66 @@
       {% endif %}
     </div>
   </div>
-
-  <!-- Minimized Button -->
+  
   <button class="rp-minimized rp-position-{{ block.settings.position }}" 
           type="button"
           aria-label="Open rewards widget" 
           style="display: none;">
-    <span class="rp-icon">{{ block.settings.icon_emoji | default: '🎁' }}</span>
+    <span class="rp-icon">🎁</span>
     <span class="rp-text">Rewards</span>
     <span class="rp-mini-value" data-rewards-credit></span>
   </button>
 
-  <!-- Pass Context to JavaScript -->
-  <script type="application/json" data-rewards-context="{{ block.id }}">
-    {
-      "blockId": {{ block.id | json }},
-      "shopDomain": {{ shop.domain | json }},
-      "shopName": {{ shop.name | json }},
-      "apiUrl": {{ '/apps/rewardspro/membership' | json }},
-      "accountUrl": {{ routes.account_url | json }},
-      "loginUrl": {{ routes.account_login_url | json }},
-      "registerUrl": {{ routes.account_register_url | json }},
-      {% if customer %}
-        "isLoggedIn": true,
-        "customerId": {{ customer.id | json }},
-        "customerEmail": {{ customer.email | json }},
-        "customerName": {{ customer.first_name | default: customer.email | json }}
-      {% else %}
-        "isLoggedIn": false,
-        "customerId": null,
-        "customerEmail": null,
-        "customerName": null
-      {% endif %},
-      "settings": {
-        "position": {{ block.settings.position | json }},
-        "autoOpen": {{ block.settings.auto_open | default: false | json }},
-        "openDelay": {{ block.settings.open_delay | default: 3000 | json }}
-      }
-    }
+  <script>
+    (function() {
+      window.RewardsProContext = window.RewardsProContext || {};
+      window.RewardsProContext['{{ block.id }}'] = {
+        blockId: {{ block.id | json }},
+        shopDomain: {{ shop.domain | json }},
+        shopName: {{ shop.name | json }},
+        {% if customer %}
+          isLoggedIn: true,
+          customerId: {{ customer.id | json }},
+          customerEmail: {{ customer.email | json }},
+          customerName: {{ customer.first_name | default: customer.email | json }}
+        {% else %}
+          isLoggedIn: false,
+          customerId: null,
+          customerEmail: null,
+          customerName: null
+        {% endif %}
+      };
+    })();
   </script>
 
-  {% comment %} Inline Critical CSS for Fast Initial Render {% endcomment %}
   {% if block.settings.inline_critical_css %}
     <style>
-      /* Critical CSS for immediate render */
       #rewardspro-widget-{{ block.id }} {
         position: fixed;
         z-index: 999999;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       }
       
-      /* Position classes */
-      #rewardspro-widget-{{ block.id }}.rp-position-bottom-right { bottom: 20px; right: 20px; }
-      #rewardspro-widget-{{ block.id }}.rp-position-bottom-left { bottom: 20px; left: 20px; }
-      #rewardspro-widget-{{ block.id }}.rp-position-top-right { top: 20px; right: 20px; }
-      #rewardspro-widget-{{ block.id }}.rp-position-top-left { top: 20px; left: 20px; }
+      #rewardspro-widget-{{ block.id }}.rp-position-bottom-right {
+        bottom: 20px;
+        right: 20px;
+      }
       
-      /* Close button */
+      #rewardspro-widget-{{ block.id }}.rp-position-bottom-left {
+        bottom: 20px;
+        left: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-top-right {
+        top: 20px;
+        right: 20px;
+      }
+      
+      #rewardspro-widget-{{ block.id }}.rp-position-top-left {
+        top: 20px;
+        left: 20px;
+      }
+      
       #rewardspro-widget-{{ block.id }} .rp-close-btn {
         position: absolute;
         top: 12px;
@@ -150,7 +143,6 @@
         color: #666;
       }
       
-      /* Content container */
       #rewardspro-widget-{{ block.id }} .rp-content {
         background: white;
         border-radius: 12px;
@@ -158,21 +150,105 @@
         padding: 20px;
         min-width: 320px;
         max-width: 400px;
-        animation: rpSlideIn 0.3s ease-out;
       }
       
-      /* Loading spinner */
+      #rewardspro-widget-{{ block.id }} .rp-loading {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+      }
+      
       #rewardspro-widget-{{ block.id }} .rp-spinner {
         width: 40px;
         height: 40px;
         margin: 0 auto 10px;
         border: 3px solid #f3f3f3;
-        border-top-color: #667eea;
+        border-top: 3px solid #667eea;
         border-radius: 50%;
         animation: rpSpin 1s linear infinite;
       }
       
-      /* Minimized button */
+      #rewardspro-widget-{{ block.id }} .rp-login-prompt {
+        padding: 12px;
+        text-align: center;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        animation: rpBounce 2s infinite;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-prompt h3 {
+        margin: 0 0 12px 0;
+        font-size: 24px;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-benefits {
+        margin: 24px 0;
+        padding: 20px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        border-radius: 12px;
+        text-align: left;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-benefit {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0;
+        font-size: 14px;
+        color: #495057;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        margin: 24px 0;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-login-btn,
+      #rewardspro-widget-{{ block.id }} .rp-register-btn {
+        display: inline-block;
+        padding: 14px 32px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 15px;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        cursor: pointer;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        color: white;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-btn-secondary {
+        background: white;
+        color: #667eea;
+        border: 2px solid #667eea;
+      }
+      
+      #rewardspro-widget-{{ block.id }} .rp-btn-secondary:hover {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-color: transparent;
+      }
+      
       .rp-minimized {
         display: flex;
         align-items: center;
@@ -201,21 +277,47 @@
         box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
       }
       
-      /* Animations */
+      .rp-minimized .rp-mini-value {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-weight: 700;
+        display: none;
+      }
+      
+      @keyframes rpSpin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      
+      @keyframes rpBounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+      }
+      
       @keyframes rpSlideIn {
         from { opacity: 0; transform: translateY(20px); }
         to { opacity: 1; transform: translateY(0); }
       }
       
-      @keyframes rpSpin {
-        to { transform: rotate(360deg); }
+      @keyframes rpSlideOut {
+        from { opacity: 1; transform: translateY(0); }
+        to { opacity: 0; transform: translateY(20px); }
       }
       
-      /* Mobile responsive */
       @media (max-width: 480px) {
         #rewardspro-widget-{{ block.id }} .rp-content {
-          min-width: calc(100vw - 40px);
+          min-width: auto;
           max-width: calc(100vw - 40px);
+        }
+        
+        #rewardspro-widget-{{ block.id }} .rp-login-actions {
+          flex-direction: column;
+        }
+        
+        #rewardspro-widget-{{ block.id }} .rp-login-btn,
+        #rewardspro-widget-{{ block.id }} .rp-register-btn {
+          width: 100%;
         }
       }
     </style>
@@ -261,64 +363,6 @@
         {"value": "top-left", "label": "Top Left"}
       ],
       "default": "bottom-right"
-    },
-    {
-      "type": "checkbox",
-      "id": "auto_open",
-      "label": "Auto-open on page load",
-      "default": false,
-      "info": "Automatically opens the widget after a delay"
-    },
-    {
-      "type": "range",
-      "id": "open_delay",
-      "label": "Auto-open delay (ms)",
-      "min": 1000,
-      "max": 9999,
-      "step": 1000,
-      "default": 3000,
-      "info": "Delay before auto-opening (if enabled)"
-    },
-    {
-      "type": "header",
-      "content": "Customization"
-    },
-    {
-      "type": "text",
-      "id": "icon_emoji",
-      "label": "Icon Emoji",
-      "default": "🎁",
-      "info": "Emoji shown in the widget and minimized button"
-    },
-    {
-      "type": "text",
-      "id": "login_heading",
-      "label": "Login Heading",
-      "default": "Join Our Rewards Program!"
-    },
-    {
-      "type": "textarea",
-      "id": "login_message",
-      "label": "Login Message",
-      "default": "Earn cashback on every purchase and unlock exclusive benefits as a member."
-    },
-    {
-      "type": "text",
-      "id": "benefit_1",
-      "label": "Benefit 1",
-      "default": "Earn cashback on all orders"
-    },
-    {
-      "type": "text",
-      "id": "benefit_2",
-      "label": "Benefit 2",
-      "default": "Unlock higher tier benefits"
-    },
-    {
-      "type": "text",
-      "id": "benefit_3",
-      "label": "Benefit 3",
-      "default": "Get exclusive member offers"
     }
   ]
 }
