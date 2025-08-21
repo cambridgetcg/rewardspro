@@ -12,16 +12,7 @@ import {
   Divider,
   ProgressBar,
   DataTable,
-  Icon,
 } from "@shopify/polaris";
-import {
-  TrendingUpIcon,
-  TrendingDownIcon,
-  CashDollarIcon,
-  CustomersIcon,
-  AnalyticsIcon,
-  CalendarIcon,
-} from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { getAnalyticsDashboard } from "../services/analytics.server";
 
@@ -59,36 +50,33 @@ function MetricCard({
   value, 
   subtitle, 
   trend, 
-  trendValue,
-  icon 
+  trendValue
 }: {
   title: string;
   value: string;
   subtitle?: string;
   trend?: 'up' | 'down' | 'neutral';
   trendValue?: string;
-  icon?: any;
 }) {
   return (
     <Card>
       <Box padding="400">
         <BlockStack gap="300">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {icon && <Icon source={icon} tone="base" />}
-            <Text as="h3" variant="headingSm" tone="subdued">
-              {title}
-            </Text>
-          </div>
+          <Text as="h3" variant="headingSm" tone="subdued">
+            {title}
+          </Text>
           <Text as="p" variant="heading2xl" fontWeight="bold">
             {value}
           </Text>
           {(subtitle || trendValue) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               {trend && (
-                <Icon 
-                  source={trend === 'up' ? TrendingUpIcon : TrendingDownIcon} 
-                  tone={trend === 'up' ? 'success' : 'critical'}
-                />
+                <span style={{ 
+                  fontSize: '16px',
+                  color: trend === 'up' ? '#10B981' : '#EF4444'
+                }}>
+                  {trend === 'up' ? '↑' : '↓'}
+                </span>
               )}
               {trendValue && (
                 <Badge tone={trend === 'up' ? 'success' : trend === 'down' ? 'critical' : 'info'}>
@@ -118,7 +106,7 @@ function TierPerformanceTable({ tiers }: { tiers: any[] }) {
     formatCurrency(tier.avgOrderValue),
     `${tier.avgPurchaseFrequency.toFixed(1)}`,
     formatPercent(tier.retentionRate),
-    <Badge tone={tier.retentionRate > 70 ? "success" : tier.retentionRate > 50 ? "warning" : "critical"}>
+    <Badge tone={tier.retentionRate > 70 ? "success" : tier.retentionRate > 50 ? "attention" : "critical"}>
       {tier.retentionRate > 70 ? "High" : tier.retentionRate > 50 ? "Medium" : "Low"}
     </Badge>
   ]);
@@ -154,7 +142,6 @@ export default function Analytics() {
               <MetricCard
                 title="Member Revenue"
                 value={formatCurrency(businessGrowth.revenue.totalFromMembers)}
-                icon={CashDollarIcon}
               />
               <MetricCard
                 title="Non-Member Revenue"
@@ -192,7 +179,6 @@ export default function Analytics() {
               <MetricCard
                 title="Avg CLV (Members)"
                 value={formatCurrency(businessGrowth.clv.averageClvMembers)}
-                icon={CustomersIcon}
               />
               <MetricCard
                 title="Avg CLV (Non-Members)"
@@ -218,7 +204,6 @@ export default function Analytics() {
               <MetricCard
                 title="Days Between (Members)"
                 value={`${businessGrowth.purchaseFrequency.avgDaysBetweenPurchasesMembers.toFixed(0)} days`}
-                icon={CalendarIcon}
               />
               <MetricCard
                 title="Days Between (Non-Members)"
@@ -283,13 +268,13 @@ export default function Analytics() {
                     </BlockStack>
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm" tone="subdued">At Risk</Text>
-                      <Text as="p" variant="headingLg" fontWeight="bold" tone="warning">
+                      <Text as="p" variant="headingLg" fontWeight="bold" tone="caution">
                         {tierActivity.tierMovement.atRiskCount}
                       </Text>
                     </BlockStack>
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm" tone="subdued">Close to Upgrade</Text>
-                      <Text as="p" variant="headingLg" fontWeight="bold" tone="info">
+                      <Text as="p" variant="headingLg" fontWeight="bold">
                         {tierActivity.tierMovement.closeToUpgradeCount}
                       </Text>
                     </BlockStack>
@@ -319,7 +304,7 @@ export default function Analytics() {
                             {tier.tierName}
                           </Text>
                           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                            <Badge>{formatPercent(tier.percentOfTotalRevenue)} of total</Badge>
+                            <Badge>{`${formatPercent(tier.percentOfTotalRevenue)} of total`}</Badge>
                             <Text as="p" variant="bodyMd" fontWeight="bold">
                               {formatCurrency(tier.totalRevenue)}
                             </Text>
@@ -348,7 +333,6 @@ export default function Analytics() {
               <MetricCard
                 title="Total Earned (All Time)"
                 value={formatCurrency(storeCredit.earned.totalAllTime)}
-                icon={CashDollarIcon}
               />
               <MetricCard
                 title="Current Period"
@@ -428,7 +412,7 @@ export default function Analytics() {
                     </BlockStack>
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm" tone="subdued">Outstanding Liability</Text>
-                      <Text as="p" variant="headingLg" fontWeight="bold" tone="warning">
+                      <Text as="p" variant="headingLg" fontWeight="bold" tone="caution">
                         {formatCurrency(storeCredit.economics.outstandingLiability)}
                       </Text>
                     </BlockStack>
@@ -469,7 +453,6 @@ export default function Analytics() {
               <MetricCard
                 title="Total Members"
                 value={formatNumber(programHealth.totalMembers)}
-                icon={CustomersIcon}
               />
               <MetricCard
                 title="Active (30d)"
@@ -566,7 +549,7 @@ export default function Analytics() {
                     <Text as="p" variant="bodySm" tone="subdued">
                       Industry Average: 65-75%
                     </Text>
-                    <Badge tone={storeCredit.economics.redemptionRate >= 65 ? "success" : "warning"}>
+                    <Badge tone={storeCredit.economics.redemptionRate >= 65 ? "success" : "attention"}>
                       {storeCredit.economics.redemptionRate >= 65 ? "Above Average" : "Below Average"}
                     </Badge>
                   </BlockStack>
@@ -579,7 +562,7 @@ export default function Analytics() {
                     <Text as="p" variant="bodySm" tone="subdued">
                       Industry Average: 2.5-3.5x
                     </Text>
-                    <Badge tone={businessGrowth.clv.clvMultiplier >= 2.5 ? "success" : "warning"}>
+                    <Badge tone={businessGrowth.clv.clvMultiplier >= 2.5 ? "success" : "attention"}>
                       {businessGrowth.clv.clvMultiplier >= 2.5 ? "Above Average" : "Below Average"}
                     </Badge>
                   </BlockStack>
@@ -592,7 +575,7 @@ export default function Analytics() {
                     <Text as="p" variant="bodySm" tone="subdued">
                       Industry Average: 3-5/year
                     </Text>
-                    <Badge tone={businessGrowth.purchaseFrequency.purchasesPerMemberPerYear >= 3 ? "success" : "warning"}>
+                    <Badge tone={businessGrowth.purchaseFrequency.purchasesPerMemberPerYear >= 3 ? "success" : "attention"}>
                       {businessGrowth.purchaseFrequency.purchasesPerMemberPerYear >= 3 ? "Above Average" : "Below Average"}
                     </Badge>
                   </BlockStack>
