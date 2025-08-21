@@ -61,9 +61,10 @@
   transform: rotate(90deg);
 }
 
-.rp-close-btn svg {
-  width: 16px;
-  height: 16px;
+.rp-close-icon {
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 300;
 }
 
 /* ============================================
