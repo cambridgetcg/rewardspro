@@ -27,9 +27,6 @@ export default function App() {
         <Link to="/app" rel="home">
           Home
         </Link>
-        <Link to="/app/dashboard">
-          Dashboard
-        </Link>
         <Link to="/app/analytics">
           Analytics
         </Link>
