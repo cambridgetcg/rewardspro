@@ -85,7 +85,11 @@ export default function App() {
               <p>Create cashback tiers (e.g., Bronze 2%, Silver 5%, Gold 10%)</p>
             </li>
             <li>
-              <strong>Customers Shop</strong>
+              <strong>Add Widget to Theme</strong>
+              <p>Install the RewardsPro widget to display cashback info on your store</p>
+            </li>
+            <li>
+              <strong>Customers Shop & Earn</strong>
               <p>Cashback automatically calculates and applies as store credit</p>
             </li>
             <li>
@@ -93,6 +97,42 @@ export default function App() {
               <p>Customers return to spend their rewards and earn more</p>
             </li>
           </ol>
+        </div>
+        
+        {/* Widget Installation CTA */}
+        <div className={styles.widgetCTA}>
+          <h2 className={styles.sectionTitle}>⚡ Quick Setup Required</h2>
+          <div className={styles.widgetContent}>
+            <p className={styles.widgetText}>
+              After installing RewardsPro, add our widget to your store theme to display cashback rates and rewards to customers.
+            </p>
+            <div className={styles.widgetSteps}>
+              <div className={styles.widgetStep}>
+                <span className={styles.stepNumber}>1</span>
+                <div>
+                  <strong>Install RewardsPro</strong>
+                  <p>Complete the app installation first</p>
+                </div>
+              </div>
+              <div className={styles.widgetStep}>
+                <span className={styles.stepNumber}>2</span>
+                <div>
+                  <strong>Go to Theme Customizer</strong>
+                  <p>Navigate to Online Store → Themes → Customize</p>
+                </div>
+              </div>
+              <div className={styles.widgetStep}>
+                <span className={styles.stepNumber}>3</span>
+                <div>
+                  <strong>Add RewardsPro Widget</strong>
+                  <p>Add app block to product pages to show cashback rates</p>
+                </div>
+              </div>
+            </div>
+            <p className={styles.widgetNote}>
+              The widget displays tier-based cashback percentages and helps customers track their rewards directly on product pages.
+            </p>
+          </div>
         </div>
 
         {/* Trust Indicators */}

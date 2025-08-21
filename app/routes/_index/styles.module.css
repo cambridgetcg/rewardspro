@@ -201,6 +201,84 @@
   line-height: 1.5;
 }
 
+/* Widget Installation CTA */
+.widgetCTA {
+  margin: 3rem 0;
+  padding: 2.5rem;
+  background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+  border-radius: 1rem;
+  border: 2px solid #ff9800;
+}
+
+.widgetContent {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.widgetText {
+  font-size: 1.1rem;
+  color: #333;
+  text-align: center;
+  margin-bottom: 2rem;
+  line-height: 1.6;
+}
+
+.widgetSteps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 2rem;
+  margin: 2rem 0;
+}
+
+.widgetStep {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  background: white;
+  padding: 1.5rem;
+  border-radius: 0.75rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.stepNumber {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  background: #ff9800;
+  color: white;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.widgetStep strong {
+  display: block;
+  color: #333;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.widgetStep p {
+  margin: 0;
+  color: #666;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.widgetNote {
+  text-align: center;
+  color: #666;
+  font-size: 0.95rem;
+  font-style: italic;
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 0.5rem;
+}
+
 /* Trust Indicators */
 .trust {
   padding: 2rem;
