@@ -5,30 +5,18 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { useState, useEffect } from "react";
 import { EvaluationPeriod } from "@prisma/client";
-import { getTierDistribution, batchEvaluateCustomerTiers, handleExpiredMemberships } from "../services/customer-tier.server";
+import { batchEvaluateCustomerTiers, handleExpiredMemberships } from "../services/customer-tier.server";
+import { getCachedTierDistribution, type OptimizedTierData } from "../services/tier-performance.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   
-  const tierDistribution = await getTierDistribution(session.shop);
-
-  // Get total customers and total cashback earned
-  const [totalCustomers, totalCashback] = await Promise.all([
-    prisma.customer.count({ where: { shopDomain: session.shop } }),
-    prisma.cashbackTransaction.aggregate({
-      where: { shopDomain: session.shop },
-      _sum: { cashbackAmount: true }
-    })
-  ]);
+  // Use optimized and cached version
+  const data = await getCachedTierDistribution(session.shop);
 
   return json({ 
-    tiers: tierDistribution,
-    stats: {
-      totalCustomers,
-      totalCashback: totalCashback._sum.cashbackAmount || 0,
-      activeTiers: tierDistribution.filter(t => t.isActive).length,
-      totalMembers: tierDistribution.reduce((sum, t) => sum + t.memberCount, 0)
-    }
+    tiers: data.tiers,
+    stats: data.stats
   });
 }
 
@@ -576,7 +564,7 @@ export default function TierSettings() {
               </tr>
             </thead>
             <tbody>
-              {tiers.map((tier) => (
+              {tiers.map((tier: OptimizedTierData) => (
                 <tr key={tier.id}>
                   {editingTierId === tier.id ? (
                     <td colSpan={8} style={{ padding: 0 }}>
