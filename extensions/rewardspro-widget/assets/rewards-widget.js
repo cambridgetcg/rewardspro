@@ -1,380 +1,537 @@
 // extensions/rewardspro-widget/assets/rewards-widget.js
-class RewardsWidget {
-  constructor(container) {
-    this.container = container;
-    this.id = container?.id || 'rewards-widget';
-    this.contentEl = container?.querySelector('.rp-content') || container;
-    this.closeBtn = container?.querySelector('.rp-close-btn');
-    this.minimizedBtn = container?.parentElement?.querySelector('.rp-minimized') || 
-                        document.querySelector('.rp-minimized');
-    this.retryAttempts = 3;
-    this.retryDelay = 1000;
-    this.context = this.getContextFromLiquid();
-    this.isMinimized = false;
-    this.dataLoaded = false;
-    this.loadingData = false;
-    
-    // Check if widget should start minimized (from session storage)
-    const savedState = sessionStorage.getItem('rewardspro-widget-state');
-    if (savedState === 'minimized') {
-      this.isMinimized = true;
-      this.minimize(false); // Don't animate on initial load
-    }
-    
-    this.setupEventListeners();
-    this.init();
-  }
+// RewardsPro Widget - Production Version
 
-  setupEventListeners() {
-    // Close button click
-    if (this.closeBtn) {
-      this.closeBtn.addEventListener('click', () => {
-        this.minimize();
-      });
-    }
-    
-    // Minimized button click
-    if (this.minimizedBtn) {
-      this.minimizedBtn.addEventListener('click', () => {
-        this.maximize();
-      });
-    }
-    
-    // Close on Escape key
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !this.isMinimized) {
-        this.minimize();
-      }
-    });
-  }
+(function() {
+  'use strict';
 
-  minimize(animate = true) {
-    this.isMinimized = true;
-    
-    // Hide main widget
-    if (animate) {
-      this.container.style.animation = 'slideOut 0.3s ease-out';
-      setTimeout(() => {
-        this.container.style.display = 'none';
-        this.container.style.animation = '';
-      }, 300);
-    } else {
-      this.container.style.display = 'none';
-    }
-    
-    // Show minimized button
-    if (this.minimizedBtn) {
-      this.minimizedBtn.style.display = 'flex';
-      if (animate) {
-        this.minimizedBtn.style.animation = 'slideIn 0.3s ease-out';
-      }
-    }
-    
-    // Save state
-    sessionStorage.setItem('rewardspro-widget-state', 'minimized');
-  }
-
-  maximize() {
-    this.isMinimized = false;
-    
-    // Show main widget
-    this.container.style.display = 'block';
-    this.container.style.animation = 'slideIn 0.3s ease-out';
-    
-    // Hide minimized button
-    if (this.minimizedBtn) {
-      this.minimizedBtn.style.animation = 'slideOut 0.3s ease-out';
-      setTimeout(() => {
-        this.minimizedBtn.style.display = 'none';
-        this.minimizedBtn.style.animation = '';
-      }, 300);
-    }
-    
-    // Save state
-    sessionStorage.setItem('rewardspro-widget-state', 'maximized');
-    
-    // Initialize data if not already loaded
-    if (!this.dataLoaded && !this.loadingData) {
+  /**
+   * RewardsWidget Class
+   * Handles the rewards widget functionality
+   */
+  class RewardsWidget {
+    constructor(container) {
+      // Core elements
+      this.container = container;
+      this.id = container.id || 'rewards-widget';
+      this.contentEl = container.querySelector('.rp-content');
+      this.closeBtn = container.querySelector('.rp-close-btn');
+      this.minimizedBtn = document.querySelector('.rp-minimized');
+      
+      // Configuration
+      this.config = {
+        retryAttempts: 3,
+        retryDelay: 1000,
+        animationDuration: 300,
+        storageKey: 'rewardspro-widget-state'
+      };
+      
+      // State
+      this.state = {
+        isMinimized: false,
+        isLoading: false,
+        dataLoaded: false,
+        customerData: null
+      };
+      
+      // Get context from Liquid template
+      this.context = this.getContext();
+      
+      // Initialize
       this.init();
     }
-  }
 
-  getContextFromLiquid() {
-    const blockId = this.container?.dataset?.blockId;
-    if (window.RewardsProContext && blockId) {
-      return window.RewardsProContext[blockId];
-    }
-    
-    // Fallback: detect Shopify customer
-    return {
-      isLoggedIn: typeof window.ShopifyAnalytics?.meta?.page?.customerId === 'number',
-      customerId: window.ShopifyAnalytics?.meta?.page?.customerId || null,
-      shopDomain: window.Shopify?.shop || null
-    };
-  }
-
-  async init() {
-    // Don't fetch data if minimized
-    if (this.isMinimized) {
-      return;
-    }
-    
-    // If customer is not logged in, show login prompt immediately
-    if (this.context && this.context.isLoggedIn === false) {
-      this.showLoginPrompt();
-      this.dataLoaded = true;
-      return;
-    }
-    
-    // Show loading state while fetching data
-    this.showLoading();
-    this.loadingData = true;
-    
-    // Fetch customer data
-    await this.fetchCustomerData();
-    this.loadingData = false;
-  }
-
-  async fetchCustomerData(attempt = 1) {
-    try {
-      const url = '/apps/rewardspro/membership';
+    /**
+     * Get context data from Liquid template
+     */
+    getContext() {
+      const blockId = this.container.dataset.blockId;
+      const contextEl = document.querySelector(`script[data-rewards-context="${blockId}"]`);
       
-      const response = await fetch(url, {
-        method: 'GET',
-        credentials: 'same-origin',
-        headers: {
-          'Accept': 'application/json',
-          'Cache-Control': 'no-cache'
+      if (contextEl) {
+        try {
+          return JSON.parse(contextEl.textContent);
+        } catch (e) {
+          console.warn('Failed to parse context data');
+        }
+      }
+      
+      // Fallback: detect from Shopify analytics
+      return {
+        isLoggedIn: this.isCustomerLoggedIn(),
+        customerId: this.getCustomerId(),
+        shopDomain: window.Shopify?.shop || null,
+        apiUrl: '/apps/rewardspro/membership',
+        settings: {}
+      };
+    }
+
+    /**
+     * Check if customer is logged in
+     */
+    isCustomerLoggedIn() {
+      // Multiple detection methods for compatibility
+      return !!(
+        window.ShopifyAnalytics?.meta?.page?.customerId ||
+        window.meta?.page?.customerId ||
+        document.querySelector('body').classList.contains('customer-logged-in')
+      );
+    }
+
+    /**
+     * Get customer ID
+     */
+    getCustomerId() {
+      return window.ShopifyAnalytics?.meta?.page?.customerId || 
+             window.meta?.page?.customerId || 
+             null;
+    }
+
+    /**
+     * Initialize widget
+     */
+    init() {
+      // Check saved state
+      const savedState = this.getSavedState();
+      if (savedState === 'minimized') {
+        this.state.isMinimized = true;
+        this.minimize(false);
+      }
+      
+      // Setup event listeners
+      this.setupEventListeners();
+      
+      // Load data if visible
+      if (!this.state.isMinimized) {
+        this.loadData();
+      }
+      
+      // Handle auto-open
+      if (this.context.settings?.autoOpen && !this.state.isMinimized) {
+        setTimeout(() => {
+          if (this.state.isMinimized) {
+            this.maximize();
+          }
+        }, this.context.settings.openDelay || 3000);
+      }
+    }
+
+    /**
+     * Setup event listeners
+     */
+    setupEventListeners() {
+      // Close button
+      if (this.closeBtn) {
+        this.closeBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          this.minimize();
+        });
+      }
+      
+      // Minimized button
+      if (this.minimizedBtn) {
+        this.minimizedBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          this.maximize();
+        });
+      }
+      
+      // Keyboard shortcut (Escape)
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !this.state.isMinimized) {
+          this.minimize();
         }
       });
-
-      // Check if response is JSON
-      const contentType = response.headers.get('content-type');
-      const isJson = contentType && contentType.includes('application/json');
       
-      if (!isJson) {
-        // Non-JSON response usually means app proxy not configured or user not logged in
-        this.showLoginPrompt();
-        this.dataLoaded = true;
+      // Handle visibility change (browser tab switching)
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !this.state.isMinimized && !this.state.dataLoaded) {
+          this.loadData();
+        }
+      });
+    }
+
+    /**
+     * Load customer data
+     */
+    loadData() {
+      // Check if already loading or loaded
+      if (this.state.isLoading || this.state.dataLoaded) {
         return;
       }
+      
+      // Check if customer is logged in
+      if (!this.context.isLoggedIn) {
+        this.showLoginPrompt();
+        this.state.dataLoaded = true;
+        return;
+      }
+      
+      // Show loading state
+      this.showLoading();
+      
+      // Fetch data
+      this.fetchCustomerData();
+    }
 
-      // Parse JSON response
-      let data;
+    /**
+     * Fetch customer data from API
+     */
+    async fetchCustomerData(attempt = 1) {
+      this.state.isLoading = true;
+      
       try {
-        data = await response.json();
-      } catch (jsonError) {
-        this.showLoginPrompt();
-        this.dataLoaded = true;
-        return;
+        // Build URL with query parameters
+        const url = new URL(this.context.apiUrl, window.location.origin);
+        
+        // Add query parameters if available
+        if (this.context.customerId) {
+          url.searchParams.append('customer_id', this.context.customerId);
+        }
+        if (this.context.shopDomain) {
+          url.searchParams.append('shop', this.context.shopDomain);
+        }
+        
+        // Fetch data
+        const response = await fetch(url.toString(), {
+          method: 'GET',
+          credentials: 'same-origin',
+          headers: {
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          }
+        });
+        
+        // Check content type
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error('Invalid response format');
+        }
+        
+        // Parse response
+        const data = await response.json();
+        
+        // Handle response
+        if (data.requiresLogin === true) {
+          this.showLoginPrompt();
+        } else if (data.success) {
+          this.state.customerData = data;
+          this.updateWidget(data);
+        } else {
+          throw new Error(data.error || 'Failed to load data');
+        }
+        
+        this.state.dataLoaded = true;
+        
+      } catch (error) {
+        // Retry logic
+        if (attempt < this.config.retryAttempts) {
+          setTimeout(() => {
+            this.fetchCustomerData(attempt + 1);
+          }, this.config.retryDelay * attempt);
+        } else {
+          // Final failure - show login prompt as fallback
+          this.showLoginPrompt();
+          this.state.dataLoaded = true;
+        }
+      } finally {
+        this.state.isLoading = false;
       }
+    }
+
+    /**
+     * Update widget with customer data
+     */
+    updateWidget(data) {
+      const html = `
+        <div class="rp-customer-info">
+          <h3>${this.context.settings?.iconEmoji || '🎁'} Your Rewards</h3>
+          
+          <div class="rp-stats-grid">
+            <div class="rp-stat-card rp-stat-card-primary">
+              <div class="rp-stat-value">$${this.formatNumber(data.balance?.storeCredit || 0)}</div>
+              <div class="rp-stat-label">Store Credit</div>
+            </div>
+            
+            <div class="rp-stat-card">
+              <div class="rp-stat-value">${data.membership?.tier?.name || 'Bronze'}</div>
+              <div class="rp-stat-label">Current Tier</div>
+            </div>
+            
+            <div class="rp-stat-card">
+              <div class="rp-stat-value">${data.membership?.tier?.cashbackPercent || 1}%</div>
+              <div class="rp-stat-label">Cashback Rate</div>
+            </div>
+            
+            <div class="rp-stat-card">
+              <div class="rp-stat-value">$${this.formatNumber(data.balance?.totalEarned || 0)}</div>
+              <div class="rp-stat-label">Total Earned</div>
+            </div>
+          </div>
+          
+          <div class="rp-customer-details">
+            <p class="rp-customer-id">Customer ID: ${data.customer?.shopifyId || 'Unknown'}</p>
+            ${data.customer?.memberSince ? `
+              <p class="rp-member-since">Member since: ${this.formatDate(data.customer.memberSince)}</p>
+            ` : ''}
+          </div>
+          
+          <div class="rp-actions">
+            <a href="${this.context.accountUrl || '/account'}" class="rp-action-link">
+              View Account →
+            </a>
+          </div>
+        </div>
+      `;
       
-      // Check if login is required
-      if (data.requiresLogin === true) {
-        this.showLoginPrompt();
-        this.dataLoaded = true;
-        return;
-      }
+      this.contentEl.innerHTML = html;
+      this.updatePageElements(data);
+    }
+
+    /**
+     * Update page elements with rewards data
+     */
+    updatePageElements(data) {
+      // Update store credit displays
+      const creditElements = document.querySelectorAll('[data-rewards-credit]');
+      creditElements.forEach(el => {
+        const amount = data.balance?.storeCredit || 0;
+        el.textContent = `$${this.formatNumber(amount)}`;
+        
+        // Show/hide minimized button value
+        if (el.classList.contains('rp-mini-value')) {
+          el.style.display = amount > 0 ? 'inline-block' : 'none';
+        }
+      });
       
-      // Check for errors that indicate login is needed
-      if (data.error && (
-        data.error.toLowerCase().includes('not logged in') ||
-        data.error.toLowerCase().includes('missing customer') ||
-        data.error.toLowerCase().includes('auth')
-      )) {
-        this.showLoginPrompt();
-        this.dataLoaded = true;
-        return;
-      }
+      // Update tier displays
+      const tierElements = document.querySelectorAll('[data-rewards-tier]');
+      tierElements.forEach(el => {
+        el.textContent = data.membership?.tier?.name || 'Bronze';
+      });
       
-      // Handle successful response
-      if (data.success) {
-        this.updateWidgetData(data);
-        return;
-      }
+      // Update cashback rate displays
+      const cashbackElements = document.querySelectorAll('[data-rewards-cashback]');
+      cashbackElements.forEach(el => {
+        el.textContent = `${data.membership?.tier?.cashbackPercent || 1}%`;
+      });
+    }
+
+    /**
+     * Show loading state
+     */
+    showLoading() {
+      this.contentEl.innerHTML = `
+        <div class="rp-loading">
+          <div class="rp-spinner"></div>
+          <p>Loading your rewards...</p>
+        </div>
+      `;
+    }
+
+    /**
+     * Show login prompt
+     */
+    showLoginPrompt() {
+      this.contentEl.innerHTML = `
+        <div class="rp-login-prompt">
+          <div class="rp-login-icon">${this.context.settings?.iconEmoji || '🎁'}</div>
+          <h3>Join Our Rewards Program!</h3>
+          <p class="rp-login-message">
+            Earn cashback on every purchase and unlock exclusive benefits as a member.
+          </p>
+          
+          <div class="rp-benefits">
+            <div class="rp-benefit">
+              <span class="rp-benefit-icon">💰</span>
+              <span>Earn cashback on all orders</span>
+            </div>
+            <div class="rp-benefit">
+              <span class="rp-benefit-icon">⭐</span>
+              <span>Unlock higher tier benefits</span>
+            </div>
+            <div class="rp-benefit">
+              <span class="rp-benefit-icon">🎯</span>
+              <span>Get exclusive member offers</span>
+            </div>
+          </div>
+          
+          <div class="rp-login-actions">
+            <a href="${this.context.loginUrl || '/account/login'}" class="rp-login-btn rp-btn-primary">
+              Sign In
+            </a>
+            <a href="${this.context.registerUrl || '/account/register'}" class="rp-register-btn rp-btn-secondary">
+              Create Account
+            </a>
+          </div>
+          
+          <p class="rp-login-footer">
+            Already have an account? Sign in to view your rewards balance.
+          </p>
+        </div>
+      `;
+    }
+
+    /**
+     * Minimize widget
+     */
+    minimize(animate = true) {
+      this.state.isMinimized = true;
       
-      // Handle other errors with retry
-      throw new Error(data.error || `HTTP ${response.status}`);
-      
-    } catch (error) {
-      // Check if we should show login prompt
-      if (!this.context?.isLoggedIn || 
-          error.message.includes('404') || 
-          error.message.includes('401')) {
-        this.showLoginPrompt();
-        this.dataLoaded = true;
-        return;
-      }
-      
-      // Retry logic for actual errors
-      if (attempt < this.retryAttempts) {
+      if (animate) {
+        // Add animation class
+        this.container.style.animation = 'rpSlideOut 0.3s ease-out';
+        
+        // Hide after animation
         setTimeout(() => {
-          this.fetchCustomerData(attempt + 1);
-        }, this.retryDelay);
+          this.container.style.display = 'none';
+          this.container.style.animation = '';
+        }, this.config.animationDuration);
       } else {
-        // Final fallback - show login prompt
-        this.showLoginPrompt();
-        this.dataLoaded = true;
+        this.container.style.display = 'none';
       }
-    }
-  }
-
-  updateWidgetData(data) {
-    if (!data || !data.success) {
-      this.showError('Invalid data received');
-      return;
-    }
-
-    const html = `
-      <div class="rp-customer-info">
-        <h3>🎁 Your Rewards</h3>
-        
-        <div class="rp-stats-grid">
-          <div class="rp-stat-card rp-stat-card-primary">
-            <div class="rp-stat-value">${(data.balance?.storeCredit || 0).toFixed(2)}</div>
-            <div class="rp-stat-label">Store Credit</div>
-          </div>
-          
-          <div class="rp-stat-card">
-            <div class="rp-stat-value">${data.membership?.tier?.name || 'Bronze'}</div>
-            <div class="rp-stat-label">Current Tier</div>
-          </div>
-          
-          <div class="rp-stat-card">
-            <div class="rp-stat-value">${data.membership?.tier?.cashbackPercent || 1}%</div>
-            <div class="rp-stat-label">Cashback Rate</div>
-          </div>
-          
-          <div class="rp-stat-card">
-            <div class="rp-stat-value">${(data.balance?.totalEarned || 0).toFixed(2)}</div>
-            <div class="rp-stat-label">Total Earned</div>
-          </div>
-        </div>
-        
-        <div class="rp-customer-details">
-          <p class="rp-customer-id">Customer ID: ${data.customer?.shopifyId || 'Unknown'}</p>
-          ${data.customer?.memberSince ? `
-            <p class="rp-member-since">Member since: ${new Date(data.customer.memberSince).toLocaleDateString()}</p>
-          ` : ''}
-        </div>
-        
-        <div class="rp-actions">
-          <a href="/account" class="rp-action-link">View Account →</a>
-        </div>
-      </div>
-    `;
-    
-    this.contentEl.innerHTML = html;
-    this.updatePageElements(data);
-    this.dataLoaded = true;
-  }
-
-  updatePageElements(data) {
-    // Update any elements on the page with rewards data
-    const creditElements = document.querySelectorAll('[data-rewards-credit]');
-    creditElements.forEach(el => {
-      const formattedCredit = `${(data.balance?.storeCredit || 0).toFixed(2)}`;
-      el.textContent = formattedCredit;
       
-      // Show value in minimized button if it has credit
-      if (el.classList.contains('rp-mini-value') && data.balance?.storeCredit > 0) {
-        el.style.display = 'inline-block';
+      // Show minimized button
+      if (this.minimizedBtn) {
+        this.minimizedBtn.style.display = 'flex';
+        if (animate) {
+          this.minimizedBtn.style.animation = 'rpSlideIn 0.3s ease-out';
+        }
+      }
+      
+      // Save state
+      this.saveState('minimized');
+    }
+
+    /**
+     * Maximize widget
+     */
+    maximize() {
+      this.state.isMinimized = false;
+      
+      // Show widget
+      this.container.style.display = 'block';
+      this.container.style.animation = 'rpSlideIn 0.3s ease-out';
+      
+      // Hide minimized button
+      if (this.minimizedBtn) {
+        this.minimizedBtn.style.animation = 'rpSlideOut 0.3s ease-out';
+        setTimeout(() => {
+          this.minimizedBtn.style.display = 'none';
+          this.minimizedBtn.style.animation = '';
+        }, this.config.animationDuration);
+      }
+      
+      // Load data if needed
+      if (!this.state.dataLoaded) {
+        this.loadData();
+      }
+      
+      // Save state
+      this.saveState('maximized');
+    }
+
+    /**
+     * Save widget state
+     */
+    saveState(state) {
+      try {
+        sessionStorage.setItem(this.config.storageKey, state);
+      } catch (e) {
+        // SessionStorage might be disabled
+      }
+    }
+
+    /**
+     * Get saved widget state
+     */
+    getSavedState() {
+      try {
+        return sessionStorage.getItem(this.config.storageKey);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    /**
+     * Format number with proper decimal places
+     */
+    formatNumber(num) {
+      return Number(num).toFixed(2);
+    }
+
+    /**
+     * Format date to locale string
+     */
+    formatDate(dateString) {
+      try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString();
+      } catch (e) {
+        return dateString;
+      }
+    }
+  }
+
+  /**
+   * Initialize widgets when DOM is ready
+   */
+  function initializeWidgets() {
+    // Find all widget containers
+    const containers = document.querySelectorAll('[data-rewards-widget]');
+    
+    // Initialize each widget
+    containers.forEach(container => {
+      // Check if already initialized
+      if (!container.dataset.initialized) {
+        new RewardsWidget(container);
+        container.dataset.initialized = 'true';
       }
     });
-    
-    const tierElements = document.querySelectorAll('[data-rewards-tier]');
-    tierElements.forEach(el => {
-      el.textContent = data.membership?.tier?.name || 'Bronze';
-    });
-    
-    const cashbackElements = document.querySelectorAll('[data-rewards-cashback]');
-    cashbackElements.forEach(el => {
-      el.textContent = `${data.membership?.tier?.cashbackPercent || 1}%`;
-    });
   }
 
-  showLoading() {
-    const loadingHtml = `
-      <div class="rp-loading">
-        <div class="rp-spinner"></div>
-        <p>Loading your rewards...</p>
-      </div>
-    `;
-    this.contentEl.innerHTML = loadingHtml;
-  }
-
-  showLoginPrompt() {
-    const loginHtml = `
-      <div class="rp-login-prompt">
-        <div class="rp-login-icon">🎁</div>
-        <h3>Join Our Rewards Program!</h3>
-        <p class="rp-login-message">
-          Earn cashback on every purchase and unlock exclusive benefits as a member.
-        </p>
-        
-        <div class="rp-benefits">
-          <div class="rp-benefit">
-            <span class="rp-benefit-icon">💰</span>
-            <span>Earn cashback on all orders</span>
-          </div>
-          <div class="rp-benefit">
-            <span class="rp-benefit-icon">⭐</span>
-            <span>Unlock higher tier benefits</span>
-          </div>
-          <div class="rp-benefit">
-            <span class="rp-benefit-icon">🎯</span>
-            <span>Get exclusive member offers</span>
-          </div>
-        </div>
-        
-        <div class="rp-login-actions">
-          <a href="/account/login" class="rp-login-btn rp-btn-primary">
-            Sign In
-          </a>
-          <a href="/account/register" class="rp-register-btn rp-btn-secondary">
-            Create Account
-          </a>
-        </div>
-        
-        <p class="rp-login-footer">
-          Already have an account? Sign in to view your rewards balance.
-        </p>
-      </div>
-    `;
-    this.contentEl.innerHTML = loginHtml;
-    this.dataLoaded = true;
-  }
-
-  showError(message) {
-    const errorHtml = `
-      <div class="rp-error">
-        <h3>Unable to Load Rewards</h3>
-        <p>${message}</p>
-        <button onclick="location.reload()" class="rp-retry-btn">Retry</button>
-      </div>
-    `;
-    this.contentEl.innerHTML = errorHtml;
-    this.dataLoaded = true;
-  }
-}
-
-// Initialize widgets when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  // Find all widget containers
-  const containers = document.querySelectorAll('[data-rewards-widget]');
-  
-  containers.forEach((container) => {
-    new RewardsWidget(container);
-  });
-  
-  // Also check for legacy selectors
-  const legacyContainers = document.querySelectorAll('.rewardspro-widget');
-  legacyContainers.forEach((container) => {
-    if (!container.hasAttribute('data-rewards-widget')) {
-      new RewardsWidget(container);
+  /**
+   * DOM Ready handler
+   */
+  function domReady(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
     }
-  });
-});
+  }
 
-// Export for global access if needed
-window.RewardsWidget = RewardsWidget;
+  /**
+   * Add required animations to page if not already present
+   */
+  function addAnimations() {
+    if (!document.querySelector('#rp-animations')) {
+      const style = document.createElement('style');
+      style.id = 'rp-animations';
+      style.textContent = `
+        @keyframes rpSlideIn {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes rpSlideOut {
+          from { opacity: 1; transform: translateY(0); }
+          to { opacity: 0; transform: translateY(20px); }
+        }
+        @keyframes rpSpin {
+          to { transform: rotate(360deg); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }
+
+  // Initialize
+  domReady(() => {
+    addAnimations();
+    initializeWidgets();
+  });
+
+  // Export for global access if needed
+  window.RewardsWidget = RewardsWidget;
+  window.initializeRewardsWidgets = initializeWidgets;
+
+})();
