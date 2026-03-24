@@ -591,66 +591,47 @@ export async function batchEvaluateCustomerTiers(shopDomain: string, batchSize =
   };
 }
 
-// Get tier distribution with analytics
+// Get tier distribution with analytics — single round-trip
 export async function getTierDistribution(shopDomain: string) {
-  const tiers = await prisma.tier.findMany({
-    where: { shopDomain },
-    orderBy: { cashbackPercent: 'desc' },
-    include: {
-      _count: {
-        select: {
-          customerMemberships: {
-            where: { isActive: true }
-          }
-        }
-      }
-    }
+  const [tiers, totalCustomers, membershipCounts, spendingByTier] = await Promise.all([
+    prisma.tier.findMany({
+      where: { shopDomain },
+      orderBy: { cashbackPercent: 'desc' },
+    }),
+    prisma.customer.count({ where: { shopDomain } }),
+    prisma.customerMembership.groupBy({
+      by: ['tierId'],
+      where: { isActive: true, tier: { shopDomain } },
+      _count: true,
+    }),
+    // Aggregate spending per tier via raw SQL to avoid N+1
+    prisma.$queryRaw<Array<{ tierId: string; avgLifetime: number; avgYearly: number }>>`
+      SELECT
+        cm."tierId",
+        COALESCE(AVG(ca."lifetimeSpending"), 0) AS "avgLifetime",
+        COALESCE(AVG(ca."yearlySpending"), 0) AS "avgYearly"
+      FROM "CustomerMembership" cm
+      JOIN "Tier" t ON t.id = cm."tierId"
+      LEFT JOIN "CustomerAnalytics" ca ON ca."customerId" = cm."customerId"
+      WHERE cm."isActive" = true AND t."shopDomain" = ${shopDomain}
+      GROUP BY cm."tierId"
+    `,
+  ]);
+
+  const countMap = new Map(membershipCounts.map(m => [m.tierId, m._count]));
+  const spendMap = new Map(spendingByTier.map(s => [s.tierId, s]));
+
+  return tiers.map(tier => {
+    const memberCount = countMap.get(tier.id) || 0;
+    const spending = spendMap.get(tier.id);
+    return {
+      ...tier,
+      memberCount,
+      percentage: totalCustomers > 0 ? (memberCount / totalCustomers) * 100 : 0,
+      avgLifetimeSpending: Number(spending?.avgLifetime ?? 0),
+      avgYearlySpending: Number(spending?.avgYearly ?? 0),
+    };
   });
-
-  const totalCustomers = await prisma.customer.count({
-    where: { shopDomain }
-  });
-
-  // Get analytics for each tier
-  const tierAnalytics = await Promise.all(
-    tiers.map(async (tier) => {
-      const members = await prisma.customerMembership.findMany({
-        where: {
-          tierId: tier.id,
-          isActive: true
-        },
-        include: {
-          customer: {
-            include: {
-              analytics: true
-            }
-          }
-        }
-      });
-
-      const avgLifetimeSpending = members.reduce(
-        (sum, m) => sum + (m.customer.analytics?.lifetimeSpending || 0),
-        0
-      ) / (members.length || 1);
-
-      const avgYearlySpending = members.reduce(
-        (sum, m) => sum + (m.customer.analytics?.yearlySpending || 0),
-        0
-      ) / (members.length || 1);
-
-      return {
-        ...tier,
-        memberCount: tier._count.customerMemberships,
-        percentage: totalCustomers > 0 
-          ? (tier._count.customerMemberships / totalCustomers) * 100 
-          : 0,
-        avgLifetimeSpending,
-        avgYearlySpending
-      };
-    })
-  );
-
-  return tierAnalytics;
 }
 
 // Handle tier expiration

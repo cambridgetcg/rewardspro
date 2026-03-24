@@ -1,7 +1,7 @@
 import prisma from "../db.server";
 import { TransactionStatus } from "@prisma/client";
 
-// Types for analytics data
+// Types
 export interface BusinessGrowthMetrics {
   revenue: {
     totalFromMembers: number;
@@ -96,9 +96,15 @@ export interface ProgramHealthMetrics {
   newMembersThisPeriod: number;
   enrollmentRate: number;
   activationRate: number;
+  // TODO: Replace with real daily/weekly aggregation queries when volume justifies it
   dailyActiveMembers: number[];
   weeklyRevenue: number[];
 }
+
+const VALID_STATUSES = [
+  TransactionStatus.COMPLETED,
+  TransactionStatus.SYNCED_TO_SHOPIFY,
+];
 
 export class AnalyticsService {
   constructor(private shopDomain: string) {}
@@ -110,114 +116,179 @@ export class AnalyticsService {
     const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
     const twoYearsAgo = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
 
-    // Get all customers with membership status
-    const customers = await prisma.customer.findMany({
-      where: { shopDomain: this.shopDomain },
-      include: {
-        membershipHistory: {
-          where: { isActive: true }
+    // Count members/non-members without loading all customer rows
+    const [memberCount, totalCustomerCount] = await Promise.all([
+      prisma.customer.count({
+        where: {
+          shopDomain: this.shopDomain,
+          membershipHistory: { some: { isActive: true } },
         },
-        transactions: {
+      }),
+      prisma.customer.count({
+        where: { shopDomain: this.shopDomain },
+      }),
+    ]);
+    const nonMemberCount = totalCustomerCount - memberCount;
+
+    // Revenue aggregates — use subqueries joining through membership to split member vs non-member
+    // Member revenue: transactions where the customer has an active membership
+    const [memberRevenue, totalRevenue] = await Promise.all([
+      prisma.cashbackTransaction.aggregate({
+        where: {
+          shopDomain: this.shopDomain,
+          status: { in: VALID_STATUSES },
+          customer: { membershipHistory: { some: { isActive: true } } },
+        },
+        _sum: { orderAmount: true },
+      }),
+      prisma.cashbackTransaction.aggregate({
+        where: {
+          shopDomain: this.shopDomain,
+          status: { in: VALID_STATUSES },
+        },
+        _sum: { orderAmount: true },
+      }),
+    ]);
+
+    const totalFromMembers = memberRevenue._sum.orderAmount || 0;
+    const totalFromNonMembers =
+      (totalRevenue._sum.orderAmount || 0) - totalFromMembers;
+
+    // Period revenue for MoM/YoY — all aggregate, no raw rows
+    const [currentMonthRev, lastMonthRev, currentYearRev, lastYearRev] =
+      await Promise.all([
+        prisma.cashbackTransaction.aggregate({
           where: {
-            status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-          }
-        }
-      }
-    });
+            shopDomain: this.shopDomain,
+            createdAt: { gte: thirtyDaysAgo },
+            status: { in: VALID_STATUSES },
+          },
+          _sum: { orderAmount: true },
+        }),
+        prisma.cashbackTransaction.aggregate({
+          where: {
+            shopDomain: this.shopDomain,
+            createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo },
+            status: { in: VALID_STATUSES },
+          },
+          _sum: { orderAmount: true },
+        }),
+        prisma.cashbackTransaction.aggregate({
+          where: {
+            shopDomain: this.shopDomain,
+            createdAt: { gte: oneYearAgo },
+            status: { in: VALID_STATUSES },
+          },
+          _sum: { orderAmount: true },
+        }),
+        prisma.cashbackTransaction.aggregate({
+          where: {
+            shopDomain: this.shopDomain,
+            createdAt: { gte: twoYearsAgo, lt: oneYearAgo },
+            status: { in: VALID_STATUSES },
+          },
+          _sum: { orderAmount: true },
+        }),
+      ]);
 
-    const members = customers.filter(c => c.membershipHistory.length > 0);
-    const nonMembers = customers.filter(c => c.membershipHistory.length === 0);
+    const currentMonth = currentMonthRev._sum.orderAmount || 0;
+    const lastMonth = lastMonthRev._sum.orderAmount || 0;
+    const currentYear = currentYearRev._sum.orderAmount || 0;
+    const lastYear = lastYearRev._sum.orderAmount || 0;
 
-    // Revenue calculations
-    const totalFromMembers = members.reduce((sum, m) => 
-      sum + m.transactions.reduce((s, t) => s + t.orderAmount, 0), 0
-    );
-    const totalFromNonMembers = nonMembers.reduce((sum, m) => 
-      sum + m.transactions.reduce((s, t) => s + t.orderAmount, 0), 0
-    );
+    const monthOverMonthGrowth =
+      lastMonth > 0 ? ((currentMonth - lastMonth) / lastMonth) * 100 : 0;
+    const yearOverYearGrowth =
+      lastYear > 0 ? ((currentYear - lastYear) / lastYear) * 100 : 0;
 
-    // Current period revenue
-    const currentMonthRevenue = await prisma.cashbackTransaction.aggregate({
-      where: {
-        shopDomain: this.shopDomain,
-        createdAt: { gte: thirtyDaysAgo },
-        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-      },
-      _sum: { orderAmount: true }
-    });
+    // CLV: average totalEarned per member vs non-member
+    const [memberClv, nonMemberClv] = await Promise.all([
+      prisma.customer.aggregate({
+        where: {
+          shopDomain: this.shopDomain,
+          membershipHistory: { some: { isActive: true } },
+        },
+        _avg: { totalEarned: true },
+      }),
+      prisma.customer.aggregate({
+        where: {
+          shopDomain: this.shopDomain,
+          membershipHistory: { none: { isActive: true } },
+        },
+        _avg: { totalEarned: true },
+      }),
+    ]);
 
-    // Last period revenue
-    const lastMonthRevenue = await prisma.cashbackTransaction.aggregate({
-      where: {
-        shopDomain: this.shopDomain,
-        createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo },
-        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-      },
-      _sum: { orderAmount: true }
-    });
+    const avgClvMembers = memberClv._avg.totalEarned || 0;
+    const avgClvNonMembers = nonMemberClv._avg.totalEarned || 0;
 
-    // Year over year
-    const currentYearRevenue = await prisma.cashbackTransaction.aggregate({
+    // Purchase frequency — count-based aggregates
+    const [memberTx30, memberTx365, membersWithMultiple, membersWithAny] =
+      await Promise.all([
+        prisma.cashbackTransaction.count({
+          where: {
+            shopDomain: this.shopDomain,
+            createdAt: { gte: thirtyDaysAgo },
+            status: { in: VALID_STATUSES },
+            customer: { membershipHistory: { some: { isActive: true } } },
+          },
+        }),
+        prisma.cashbackTransaction.count({
+          where: {
+            shopDomain: this.shopDomain,
+            createdAt: { gte: oneYearAgo },
+            status: { in: VALID_STATUSES },
+            customer: { membershipHistory: { some: { isActive: true } } },
+          },
+        }),
+        // Members with >1 transaction
+        prisma.cashbackTransaction.groupBy({
+          by: ["customerId"],
+          where: {
+            shopDomain: this.shopDomain,
+            status: { in: VALID_STATUSES },
+            customer: { membershipHistory: { some: { isActive: true } } },
+          },
+          having: { customerId: { _count: { gt: 1 } } },
+        }),
+        // Members with any transaction
+        prisma.cashbackTransaction.groupBy({
+          by: ["customerId"],
+          where: {
+            shopDomain: this.shopDomain,
+            status: { in: VALID_STATUSES },
+            customer: { membershipHistory: { some: { isActive: true } } },
+          },
+        }),
+      ]);
+
+    const purchasesPerMemberPerMonth =
+      memberCount > 0 ? memberTx30 / memberCount : 0;
+    const purchasesPerMemberPerYear =
+      memberCount > 0 ? memberTx365 / memberCount : 0;
+    const repeatPurchaseRate =
+      memberCount > 0 ? (membersWithMultiple.length / memberCount) * 100 : 0;
+    const firstToSecondPurchaseRate =
+      membersWithAny.length > 0
+        ? (membersWithMultiple.length / membersWithAny.length) * 100
+        : 0;
+
+    // Avg days between purchases — estimate from avg frequency
+    const avgDaysMember =
+      purchasesPerMemberPerYear > 1
+        ? 365 / purchasesPerMemberPerYear
+        : 0;
+    const nonMemberTx365 = await prisma.cashbackTransaction.count({
       where: {
         shopDomain: this.shopDomain,
         createdAt: { gte: oneYearAgo },
-        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
+        status: { in: VALID_STATUSES },
+        customer: { membershipHistory: { none: { isActive: true } } },
       },
-      _sum: { orderAmount: true }
     });
-
-    const lastYearRevenue = await prisma.cashbackTransaction.aggregate({
-      where: {
-        shopDomain: this.shopDomain,
-        createdAt: { gte: twoYearsAgo, lt: oneYearAgo },
-        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-      },
-      _sum: { orderAmount: true }
-    });
-
-    const monthOverMonthGrowth = lastMonthRevenue._sum.orderAmount
-      ? ((currentMonthRevenue._sum.orderAmount || 0) - (lastMonthRevenue._sum.orderAmount || 0)) / lastMonthRevenue._sum.orderAmount * 100
-      : 0;
-
-    const yearOverYearGrowth = lastYearRevenue._sum.orderAmount
-      ? ((currentYearRevenue._sum.orderAmount || 0) - (lastYearRevenue._sum.orderAmount || 0)) / lastYearRevenue._sum.orderAmount * 100
-      : 0;
-
-    // CLV calculations
-    const avgClvMembers = members.length > 0
-      ? members.reduce((sum, m) => sum + m.totalEarned, 0) / members.length
-      : 0;
-    
-    const avgClvNonMembers = nonMembers.length > 0
-      ? nonMembers.reduce((sum, m) => sum + m.totalEarned, 0) / nonMembers.length
-      : 0;
-
-    // Purchase frequency
-    const memberTransactions = members.flatMap(m => m.transactions);
-    const nonMemberTransactions = nonMembers.flatMap(m => m.transactions);
-
-    const avgDaysBetweenPurchasesMembers = this.calculateAvgDaysBetweenPurchases(memberTransactions);
-    const avgDaysBetweenPurchasesNonMembers = this.calculateAvgDaysBetweenPurchases(nonMemberTransactions);
-
-    const purchasesPerMemberPerMonth = members.length > 0
-      ? memberTransactions.filter(t => t.createdAt >= thirtyDaysAgo).length / members.length
-      : 0;
-
-    const purchasesPerMemberPerYear = members.length > 0
-      ? memberTransactions.filter(t => t.createdAt >= oneYearAgo).length / members.length
-      : 0;
-
-    // Repeat purchase rate
-    const membersWithRepeatPurchases = members.filter(m => m.transactions.length > 1).length;
-    const repeatPurchaseRate = members.length > 0
-      ? (membersWithRepeatPurchases / members.length) * 100
-      : 0;
-
-    // First to second purchase rate
-    const membersWithPurchases = members.filter(m => m.transactions.length > 0).length;
-    const firstToSecondPurchaseRate = membersWithPurchases > 0
-      ? (membersWithRepeatPurchases / membersWithPurchases) * 100
-      : 0;
+    const nonMemberFreq =
+      nonMemberCount > 0 ? nonMemberTx365 / nonMemberCount : 0;
+    const avgDaysNonMember = nonMemberFreq > 1 ? 365 / nonMemberFreq : 0;
 
     return {
       revenue: {
@@ -226,22 +297,24 @@ export class AnalyticsService {
         incrementalRevenue: totalFromMembers - totalFromNonMembers,
         monthOverMonthGrowth,
         yearOverYearGrowth,
-        revenuePerMember: members.length > 0 ? totalFromMembers / members.length : 0
+        revenuePerMember:
+          memberCount > 0 ? totalFromMembers / memberCount : 0,
       },
       clv: {
         averageClvMembers: avgClvMembers,
         averageClvNonMembers: avgClvNonMembers,
-        clvMultiplier: avgClvNonMembers > 0 ? avgClvMembers / avgClvNonMembers : 1,
-        projected12MonthClv: avgClvMembers * 1.2 // Simple projection
+        clvMultiplier:
+          avgClvNonMembers > 0 ? avgClvMembers / avgClvNonMembers : 1,
+        projected12MonthClv: avgClvMembers * 1.2,
       },
       purchaseFrequency: {
-        avgDaysBetweenPurchasesMembers,
-        avgDaysBetweenPurchasesNonMembers,
+        avgDaysBetweenPurchasesMembers: avgDaysMember,
+        avgDaysBetweenPurchasesNonMembers: avgDaysNonMember,
         purchasesPerMemberPerMonth,
         purchasesPerMemberPerYear,
         repeatPurchaseRate,
-        firstToSecondPurchaseRate
-      }
+        firstToSecondPurchaseRate,
+      },
     };
   }
 
@@ -250,121 +323,170 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
 
-    // Get all tiers with members
+    const totalCustomers = await prisma.customer.count({
+      where: { shopDomain: this.shopDomain },
+    });
+
+    // Get tiers with member counts in one query
     const tiers = await prisma.tier.findMany({
       where: { shopDomain: this.shopDomain },
       include: {
-        customerMemberships: {
-          where: { isActive: true },
-          include: {
-            customer: {
-              include: {
-                transactions: {
-                  where: {
-                    status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+        _count: {
+          select: {
+            customerMemberships: { where: { isActive: true } },
+          },
+        },
+      },
     });
 
-    const totalCustomers = await prisma.customer.count({
-      where: { shopDomain: this.shopDomain }
-    });
-
-    const totalRevenue = await prisma.cashbackTransaction.aggregate({
+    // Get per-tier revenue + order count aggregates in one groupBy
+    const tierIds = tiers.map((t) => t.id);
+    const tierRevenueAgg = await prisma.cashbackTransaction.groupBy({
+      by: ["customerId"],
       where: {
         shopDomain: this.shopDomain,
-        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] }
+        status: { in: VALID_STATUSES },
+        customer: {
+          membershipHistory: {
+            some: { isActive: true, tierId: { in: tierIds } },
+          },
+        },
       },
-      _sum: { orderAmount: true }
+      _sum: { orderAmount: true },
+      _count: true,
     });
 
-    // Calculate tier metrics
-    const tierMetrics = tiers.map(tier => {
-      const customers = tier.customerMemberships.map(m => m.customer);
-      const allTransactions = customers.flatMap(c => c.transactions);
-      const yearTransactions = allTransactions.filter(t => t.createdAt >= oneYearAgo);
-      
-      const totalRevenueTier = allTransactions.reduce((sum, t) => sum + t.orderAmount, 0);
-      const avgAnnualSpend = customers.length > 0
-        ? yearTransactions.reduce((sum, t) => sum + t.orderAmount, 0) / customers.length
-        : 0;
-      
-      const avgOrderValue = allTransactions.length > 0
-        ? totalRevenueTier / allTransactions.length
-        : 0;
+    // Map customer → tier for aggregation
+    const membershipMap = await prisma.customerMembership.findMany({
+      where: {
+        isActive: true,
+        tierId: { in: tierIds },
+      },
+      select: { customerId: true, tierId: true },
+    });
 
-      const avgPurchaseFrequency = customers.length > 0
-        ? yearTransactions.length / customers.length
-        : 0;
+    const customerToTier: Record<string, string> = {};
+    for (const m of membershipMap) {
+      customerToTier[m.customerId] = m.tierId;
+    }
 
-      const avgDaysBetweenPurchases = this.calculateAvgDaysBetweenPurchases(allTransactions);
+    // Aggregate per tier
+    const tierAgg: Record<
+      string,
+      { revenue: number; orderCount: number; customers: Set<string> }
+    > = {};
+    for (const t of tiers) {
+      tierAgg[t.id] = { revenue: 0, orderCount: 0, customers: new Set() };
+    }
+    for (const row of tierRevenueAgg) {
+      const tierId = customerToTier[row.customerId];
+      if (tierId && tierAgg[tierId]) {
+        tierAgg[tierId].revenue += row._sum.orderAmount || 0;
+        tierAgg[tierId].orderCount += row._count;
+        tierAgg[tierId].customers.add(row.customerId);
+      }
+    }
 
-      // Simple retention calculation (customers with purchase in last 30 days)
-      const activeCustomers = customers.filter(c => 
-        c.transactions.some(t => t.createdAt >= thirtyDaysAgo)
-      ).length;
-      
-      const retentionRate = customers.length > 0
-        ? (activeCustomers / customers.length) * 100
-        : 0;
+    // Active customers in last 30d per tier
+    const recentActive = await prisma.cashbackTransaction.groupBy({
+      by: ["customerId"],
+      where: {
+        shopDomain: this.shopDomain,
+        createdAt: { gte: thirtyDaysAgo },
+        status: { in: VALID_STATUSES },
+        customer: {
+          membershipHistory: {
+            some: { isActive: true, tierId: { in: tierIds } },
+          },
+        },
+      },
+    });
+    const recentActiveByTier: Record<string, number> = {};
+    for (const row of recentActive) {
+      const tierId = customerToTier[row.customerId];
+      if (tierId) {
+        recentActiveByTier[tierId] = (recentActiveByTier[tierId] || 0) + 1;
+      }
+    }
+
+    const totalRevenue = tiers.reduce(
+      (sum, t) => sum + tierAgg[t.id].revenue,
+      0,
+    );
+
+    const tierMetrics = tiers.map((tier) => {
+      const agg = tierAgg[tier.id];
+      const memberCt = tier._count.customerMemberships;
+      const activeInTier = recentActiveByTier[tier.id] || 0;
+      const retentionRate =
+        memberCt > 0 ? (activeInTier / memberCt) * 100 : 0;
 
       return {
         tierId: tier.id,
         tierName: tier.name,
         cashbackPercent: tier.cashbackPercent,
-        totalCustomers: customers.length,
-        percentOfBase: totalCustomers > 0 ? (customers.length / totalCustomers) * 100 : 0,
-        avgAnnualSpend,
-        avgOrderValue,
-        avgPurchaseFrequency,
-        avgDaysBetweenPurchases,
+        totalCustomers: memberCt,
+        percentOfBase:
+          totalCustomers > 0 ? (memberCt / totalCustomers) * 100 : 0,
+        avgAnnualSpend: memberCt > 0 ? agg.revenue / memberCt : 0,
+        avgOrderValue: agg.orderCount > 0 ? agg.revenue / agg.orderCount : 0,
+        avgPurchaseFrequency: memberCt > 0 ? agg.orderCount / memberCt : 0,
+        avgDaysBetweenPurchases:
+          memberCt > 0 && agg.orderCount > memberCt
+            ? 365 / (agg.orderCount / memberCt)
+            : 0,
         retentionRate,
-        churnRate: 100 - retentionRate
+        churnRate: 100 - retentionRate,
       };
     });
 
-    // Tier movement (simplified - would need historical data for accurate tracking)
-    const recentMemberships = await prisma.customerMembership.findMany({
-      where: {
-        tier: { shopDomain: this.shopDomain },
-        startDate: { gte: thirtyDaysAgo }
-      }
-    });
+    // Tier movement from change logs
+    const [upgrades, downgrades] = await Promise.all([
+      prisma.tierChangeLog.count({
+        where: {
+          createdAt: { gte: thirtyDaysAgo },
+          changeType: "AUTOMATIC_UPGRADE",
+          toTier: { shopDomain: this.shopDomain },
+        },
+      }),
+      prisma.tierChangeLog.count({
+        where: {
+          createdAt: { gte: thirtyDaysAgo },
+          changeType: "AUTOMATIC_DOWNGRADE",
+          toTier: { shopDomain: this.shopDomain },
+        },
+      }),
+    ]);
 
-    const totalMembers = await prisma.customerMembership.count({
-      where: {
-        tier: { shopDomain: this.shopDomain },
-        isActive: true
-      }
-    });
+    const totalMembers = tiers.reduce(
+      (sum, t) => sum + t._count.customerMemberships,
+      0,
+    );
 
-    // Tier revenue contribution
-    const tierRevenue = tierMetrics.map(tm => ({
+    const tierRevenue = tierMetrics.map((tm) => ({
       tierId: tm.tierId,
       tierName: tm.tierName,
       totalRevenue: tm.avgAnnualSpend * tm.totalCustomers,
-      percentOfTotalRevenue: totalRevenue._sum.orderAmount
-        ? ((tm.avgAnnualSpend * tm.totalCustomers) / totalRevenue._sum.orderAmount) * 100
-        : 0,
-      revenuePerCustomer: tm.avgAnnualSpend
+      percentOfTotalRevenue:
+        totalRevenue > 0
+          ? ((tm.avgAnnualSpend * tm.totalCustomers) / totalRevenue) * 100
+          : 0,
+      revenuePerCustomer: tm.avgAnnualSpend,
     }));
 
     return {
       tierMetrics,
       tierMovement: {
-        upgradedCount: Math.floor(recentMemberships.length * 0.3), // Placeholder
-        downgradedCount: Math.floor(recentMemberships.length * 0.1), // Placeholder
-        atRiskCount: Math.floor(totalMembers * 0.15), // Placeholder
-        closeToUpgradeCount: Math.floor(totalMembers * 0.2), // Placeholder
-        upgradeRate: 5, // Placeholder
-        downgradeRate: 2 // Placeholder
+        upgradedCount: upgrades,
+        downgradedCount: downgrades,
+        atRiskCount: Math.floor(totalMembers * 0.15), // TODO: real at-risk query (members near min spend threshold)
+        closeToUpgradeCount: Math.floor(totalMembers * 0.2), // TODO: real close-to-upgrade query
+        upgradeRate:
+          totalMembers > 0 ? (upgrades / totalMembers) * 100 : 0,
+        downgradeRate:
+          totalMembers > 0 ? (downgrades / totalMembers) * 100 : 0,
       },
-      tierRevenue
+      tierRevenue,
     };
   }
 
@@ -373,94 +495,126 @@ export class AnalyticsService {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
-    // Earned metrics
-    const [totalEarned, currentPeriodEarned, lastPeriodEarned, totalTransactions] = await Promise.all([
-      prisma.cashbackTransaction.aggregate({
-        where: { shopDomain: this.shopDomain },
-        _sum: { cashbackAmount: true },
-        _count: true
-      }),
-      prisma.cashbackTransaction.aggregate({
+    // All aggregate — no findMany for raw rows
+    const [totalEarned, currentPeriodEarned, lastPeriodEarned, totalTxCount] =
+      await Promise.all([
+        prisma.cashbackTransaction.aggregate({
+          where: { shopDomain: this.shopDomain },
+          _sum: { cashbackAmount: true },
+          _count: true,
+        }),
+        prisma.cashbackTransaction.aggregate({
+          where: {
+            shopDomain: this.shopDomain,
+            createdAt: { gte: thirtyDaysAgo },
+          },
+          _sum: { cashbackAmount: true },
+          _count: true,
+        }),
+        prisma.cashbackTransaction.aggregate({
+          where: {
+            shopDomain: this.shopDomain,
+            createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo },
+          },
+          _sum: { cashbackAmount: true },
+        }),
+        prisma.cashbackTransaction.count({
+          where: { shopDomain: this.shopDomain },
+        }),
+      ]);
+
+    const memberCount = await prisma.customer.count({
+      where: {
+        shopDomain: this.shopDomain,
+        membershipHistory: { some: { isActive: true } },
+      },
+    });
+
+    // Outstanding balances — aggregate, not findMany
+    const balanceAgg = await prisma.customer.aggregate({
+      where: { shopDomain: this.shopDomain, storeCredit: { gt: 0 } },
+      _sum: { storeCredit: true },
+      _avg: { storeCredit: true },
+      _count: true,
+    });
+
+    const totalOutstanding = balanceAgg._sum.storeCredit || 0;
+    const avgBalance = balanceAgg._avg.storeCredit || 0;
+    const membersWithBalance = balanceAgg._count;
+
+    // Redemption metrics from ledger (actual data, not estimates)
+    const [redemptions, currentRedemptions] = await Promise.all([
+      prisma.storeCreditLedger.aggregate({
         where: {
           shopDomain: this.shopDomain,
-          createdAt: { gte: thirtyDaysAgo }
+          amount: { lt: 0 }, // debits are negative
         },
-        _sum: { cashbackAmount: true },
-        _count: true
+        _sum: { amount: true },
+        _count: true,
       }),
-      prisma.cashbackTransaction.aggregate({
+      prisma.storeCreditLedger.aggregate({
         where: {
           shopDomain: this.shopDomain,
-          createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo }
+          amount: { lt: 0 },
+          createdAt: { gte: thirtyDaysAgo },
         },
-        _sum: { cashbackAmount: true }
+        _sum: { amount: true },
+        _count: true,
       }),
-      prisma.cashbackTransaction.count({
-        where: { shopDomain: this.shopDomain }
-      })
     ]);
 
-    const members = await prisma.customer.count({
-      where: {
-        shopDomain: this.shopDomain,
-        membershipHistory: { some: { isActive: true } }
-      }
-    });
+    const totalRedeemed = Math.abs(redemptions._sum.amount || 0);
+    const currentRedeemed = Math.abs(currentRedemptions._sum.amount || 0);
+    const totalEarnedAmount = totalEarned._sum.cashbackAmount || 0;
 
-    // Get customers with credit balance
-    const customersWithCredit = await prisma.customer.findMany({
-      where: {
-        shopDomain: this.shopDomain,
-        storeCredit: { gt: 0 }
-      },
-      select: { storeCredit: true }
-    });
-
-    const totalOutstanding = customersWithCredit.reduce((sum, c) => sum + c.storeCredit, 0);
-    const avgBalance = customersWithCredit.length > 0
-      ? totalOutstanding / customersWithCredit.length
-      : 0;
-
-    // Redeemed metrics (simplified - would need proper redemption tracking)
-    const estimatedRedeemed = (totalEarned._sum.cashbackAmount || 0) * 0.7; // 70% redemption estimate
-    const currentRedeemed = (currentPeriodEarned._sum.cashbackAmount || 0) * 0.7;
-    const lastRedeemed = (lastPeriodEarned._sum.cashbackAmount || 0) * 0.7;
+    const redemptionRate =
+      totalEarnedAmount > 0
+        ? (totalRedeemed / totalEarnedAmount) * 100
+        : 0;
 
     return {
       earned: {
-        totalAllTime: totalEarned._sum.cashbackAmount || 0,
+        totalAllTime: totalEarnedAmount,
         currentPeriod: currentPeriodEarned._sum.cashbackAmount || 0,
         lastPeriod: lastPeriodEarned._sum.cashbackAmount || 0,
-        avgPerMember: members > 0 ? (totalEarned._sum.cashbackAmount || 0) / members : 0,
-        avgPerTransaction: totalEarned._count > 0 
-          ? (totalEarned._sum.cashbackAmount || 0) / totalEarned._count 
-          : 0,
+        avgPerMember:
+          memberCount > 0 ? totalEarnedAmount / memberCount : 0,
+        avgPerTransaction:
+          totalEarned._count > 0
+            ? totalEarnedAmount / totalEarned._count
+            : 0,
         transactionsEarningCredits: currentPeriodEarned._count,
-        percentTransactionsEarning: totalTransactions > 0
-          ? (currentPeriodEarned._count / totalTransactions) * 100
-          : 0
+        percentTransactionsEarning:
+          totalTxCount > 0
+            ? (currentPeriodEarned._count / totalTxCount) * 100
+            : 0,
       },
       redeemed: {
-        totalAllTime: estimatedRedeemed,
+        totalAllTime: totalRedeemed,
         currentPeriod: currentRedeemed,
-        lastPeriod: lastRedeemed,
-        avgRedemptionValue: currentRedeemed / Math.max(currentPeriodEarned._count * 0.5, 1),
-        ordersUsingCredits: Math.floor(currentPeriodEarned._count * 0.5),
-        percentOrdersUsingCredits: 50, // Estimate
-        avgDaysEarnToRedeem: 15 // Estimate
+        lastPeriod: 0, // TODO: add last period redemption query
+        avgRedemptionValue:
+          redemptions._count > 0 ? totalRedeemed / redemptions._count : 0,
+        ordersUsingCredits: currentRedemptions._count,
+        percentOrdersUsingCredits:
+          currentPeriodEarned._count > 0
+            ? (currentRedemptions._count / currentPeriodEarned._count) * 100
+            : 0,
+        avgDaysEarnToRedeem: 0, // TODO: needs join between earn and redeem events
       },
       economics: {
-        redemptionRate: 70, // Estimate
-        breakageRate: 30, // Estimate
+        redemptionRate,
+        breakageRate: 100 - redemptionRate,
         outstandingLiability: totalOutstanding,
-        creditToRevenueRatio: 0.05, // 5% estimate
-        revenuePerCreditDollar: 20, // $20 revenue per $1 credit
+        creditToRevenueRatio: 0, // TODO: needs total order revenue
+        revenuePerCreditDollar: 0, // TODO: needs total order revenue
         avgBalancePerMember: avgBalance,
-        membersWithBalance: customersWithCredit.length,
-        percentMembersWithBalance: members > 0
-          ? (customersWithCredit.length / members) * 100
-          : 0
-      }
+        membersWithBalance,
+        percentMembersWithBalance:
+          memberCount > 0
+            ? (membersWithBalance / memberCount) * 100
+            : 0,
+      },
     };
   }
 
@@ -474,59 +628,55 @@ export class AnalyticsService {
       activeMembers30,
       activeMembers90,
       newMembers,
-      totalCustomers
+      totalCustomers,
+      activatedMembers,
     ] = await Promise.all([
       prisma.customer.count({
         where: {
           shopDomain: this.shopDomain,
-          membershipHistory: { some: { isActive: true } }
-        }
+          membershipHistory: { some: { isActive: true } },
+        },
       }),
       prisma.customer.count({
         where: {
           shopDomain: this.shopDomain,
           membershipHistory: { some: { isActive: true } },
-          transactions: {
-            some: { createdAt: { gte: thirtyDaysAgo } }
-          }
-        }
+          transactions: { some: { createdAt: { gte: thirtyDaysAgo } } },
+        },
       }),
       prisma.customer.count({
         where: {
           shopDomain: this.shopDomain,
           membershipHistory: { some: { isActive: true } },
-          transactions: {
-            some: { createdAt: { gte: ninetyDaysAgo } }
-          }
-        }
+          transactions: { some: { createdAt: { gte: ninetyDaysAgo } } },
+        },
       }),
       prisma.customerMembership.count({
         where: {
           tier: { shopDomain: this.shopDomain },
-          startDate: { gte: thirtyDaysAgo }
-        }
+          startDate: { gte: thirtyDaysAgo },
+        },
       }),
       prisma.customer.count({
-        where: { shopDomain: this.shopDomain }
-      })
+        where: { shopDomain: this.shopDomain },
+      }),
+      prisma.customer.count({
+        where: {
+          shopDomain: this.shopDomain,
+          membershipHistory: { some: { isActive: true } },
+          transactions: { some: {} },
+        },
+      }),
     ]);
 
-    // Get members who made a purchase
-    const activatedMembers = await prisma.customer.count({
-      where: {
-        shopDomain: this.shopDomain,
-        membershipHistory: { some: { isActive: true } },
-        transactions: { some: {} }
-      }
-    });
-
-    // Generate sample daily/weekly data
-    const dailyActiveMembers = Array.from({ length: 30 }, (_, i) => 
-      Math.floor(activeMembers30 * (0.8 + Math.random() * 0.4))
+    // TODO: Replace with real daily/weekly aggregation queries.
+    // These are placeholder trends based on the 30-day active count.
+    // Real implementation should use groupBy on createdAt date-truncated to day/week.
+    const dailyActiveMembers = Array.from({ length: 30 }, () =>
+      Math.max(1, Math.floor(activeMembers30 * (0.8 + Math.random() * 0.4))),
     );
-
-    const weeklyRevenue = Array.from({ length: 12 }, () => 
-      Math.floor(10000 + Math.random() * 5000)
+    const weeklyRevenue = Array.from({ length: 12 }, () =>
+      Math.floor(10000 + Math.random() * 5000),
     );
 
     return {
@@ -534,44 +684,32 @@ export class AnalyticsService {
       activeMembers30Day: activeMembers30,
       activeMembers90Day: activeMembers90,
       newMembersThisPeriod: newMembers,
-      enrollmentRate: totalCustomers > 0 ? (totalMembers / totalCustomers) * 100 : 0,
-      activationRate: totalMembers > 0 ? (activatedMembers / totalMembers) * 100 : 0,
+      enrollmentRate:
+        totalCustomers > 0 ? (totalMembers / totalCustomers) * 100 : 0,
+      activationRate:
+        totalMembers > 0 ? (activatedMembers / totalMembers) * 100 : 0,
       dailyActiveMembers,
-      weeklyRevenue
+      weeklyRevenue,
     };
-  }
-
-  private calculateAvgDaysBetweenPurchases(transactions: any[]): number {
-    if (transactions.length < 2) return 0;
-    
-    const sortedDates = transactions
-      .map(t => new Date(t.createdAt).getTime())
-      .sort((a, b) => a - b);
-    
-    let totalDays = 0;
-    for (let i = 1; i < sortedDates.length; i++) {
-      totalDays += (sortedDates[i] - sortedDates[i - 1]) / (1000 * 60 * 60 * 24);
-    }
-    
-    return totalDays / (sortedDates.length - 1);
   }
 }
 
-// Export convenience functions
+// Convenience function — used by the analytics route
 export async function getAnalyticsDashboard(shopDomain: string) {
   const service = new AnalyticsService(shopDomain);
-  
-  const [businessGrowth, tierActivity, storeCredit, programHealth] = await Promise.all([
-    service.getBusinessGrowthMetrics(),
-    service.getTierActivityMetrics(),
-    service.getStoreCreditMetrics(),
-    service.getProgramHealthMetrics()
-  ]);
+
+  const [businessGrowth, tierActivity, storeCredit, programHealth] =
+    await Promise.all([
+      service.getBusinessGrowthMetrics(),
+      service.getTierActivityMetrics(),
+      service.getStoreCreditMetrics(),
+      service.getProgramHealthMetrics(),
+    ]);
 
   return {
     businessGrowth,
     tierActivity,
     storeCredit,
-    programHealth
+    programHealth,
   };
 }
