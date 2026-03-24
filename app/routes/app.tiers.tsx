@@ -23,12 +23,11 @@ import {
   Page,
   Layout,
   Card,
-  DataTable,
+  IndexTable,
   Button,
   TextField,
   Select,
   BlockStack,
-  InlineGrid,
   InlineStack,
   Text,
   Banner,
@@ -37,16 +36,15 @@ import {
   EmptyState,
   FormLayout,
   Collapsible,
-  Checkbox,
+  Modal,
 } from "@shopify/polaris";
-import { StatCard } from "../components/StatCard";
+import { HeroMetric } from "../components/HeroMetric";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
-  const tierDistribution = await getTierDistribution(session.shop);
-
-  const [totalCustomers, totalCashback] = await Promise.all([
+  const [tierDistribution, totalCustomers, totalCashback] = await Promise.all([
+    getTierDistribution(session.shop),
     prisma.customer.count({ where: { shopDomain: session.shop } }),
     prisma.cashbackTransaction.aggregate({
       where: { shopDomain: session.shop },
@@ -54,203 +52,127 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }),
   ]);
 
+  const tiers = tierDistribution || [];
+  const totalMembers = tiers.reduce((s, t) => s + t.memberCount, 0);
+
   return json({
-    tiers: tierDistribution || [],
-    stats: {
+    tiers,
+    hero: {
+      totalMembers,
       totalCustomers,
+      activeTiers: tiers.filter((t) => t.isActive).length,
       totalCashback: totalCashback._sum.cashbackAmount || 0,
-      activeTiers: tierDistribution
-        ? tierDistribution.filter((t) => t.isActive).length
-        : 0,
-      totalMembers: tierDistribution
-        ? tierDistribution.reduce((sum, t) => sum + t.memberCount, 0)
-        : 0,
     },
   });
 }
 
 type ActionResponse =
-  | { success: true; message?: string; error?: never }
-  | { success: false; error: string; message?: never };
+  | { success: true; message?: string }
+  | { success: false; error: string };
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
-
   const formData = await request.formData();
   const action = formData.get("_action");
 
   try {
-    if (action === "update") {
-      const tierId = formData.get("tierId") as string;
+    if (action === "create") {
       const name = formData.get("name") as string;
-      const minSpend = formData.get("minSpend");
-      const cashbackPercent = formData.get("cashbackPercent");
-      const isActive = formData.get("isActive") === "true";
+      const cashbackPercent = parseFloat(formData.get("cashbackPercent") as string);
+      const evaluationPeriod = formData.get("evaluationPeriod") as EvaluationPeriod;
 
-      const currentTier = await prisma.tier.findUnique({
-        where: { id: tierId, shopDomain: session.shop },
-      });
-
-      if (!currentTier) {
-        return json<ActionResponse>(
-          { success: false, error: "Tier not found" },
-          { status: 404 },
-        );
-      }
-
-      if (name && name !== currentTier.name) {
-        const existingTier = await prisma.tier.findFirst({
-          where: {
-            shopDomain: session.shop,
-            name,
-            id: { not: tierId },
-          },
-        });
-
-        if (existingTier) {
-          return json<ActionResponse>(
-            {
-              success: false,
-              error: "A tier with this name already exists",
-            },
-            { status: 400 },
-          );
-        }
-      }
-
-      await prisma.tier.update({
-        where: { id: tierId, shopDomain: session.shop },
-        data: {
-          name: name || currentTier.name,
-          minSpend: minSpend ? parseFloat(minSpend as string) : null,
-          cashbackPercent: parseFloat(cashbackPercent as string),
-          evaluationPeriod:
-            (formData.get("evaluationPeriod") as EvaluationPeriod) ||
-            currentTier.evaluationPeriod,
-          isActive,
-        },
-      });
-
-      return json<ActionResponse>({
-        success: true,
-        message: "Tier updated successfully",
-      });
-    } else if (action === "create") {
-      const name = formData.get("name") as string;
-      const cashbackPercent = parseFloat(
-        formData.get("cashbackPercent") as string,
-      );
-      const evaluationPeriod = formData.get(
-        "evaluationPeriod",
-      ) as EvaluationPeriod;
-
-      const existingTier = await prisma.tier.findFirst({
+      const exists = await prisma.tier.findFirst({
         where: { shopDomain: session.shop, name },
       });
-
-      if (existingTier) {
-        return json<ActionResponse>(
-          {
-            success: false,
-            error: "A tier with this name already exists",
-          },
-          { status: 400 },
-        );
+      if (exists) {
+        return json<ActionResponse>({ success: false, error: "Name already exists" }, { status: 400 });
       }
 
       await prisma.tier.create({
         data: {
           shopDomain: session.shop,
           name,
-          minSpend: formData.get("minSpend")
-            ? parseFloat(formData.get("minSpend") as string)
-            : null,
+          minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
           cashbackPercent,
           evaluationPeriod: evaluationPeriod || EvaluationPeriod.ANNUAL,
           isActive: true,
         },
       });
+      return json<ActionResponse>({ success: true, message: "Tier created" });
+    }
 
-      return json<ActionResponse>({
-        success: true,
-        message: "Tier created successfully",
-      });
-    } else if (action === "delete") {
+    if (action === "update") {
       const tierId = formData.get("tierId") as string;
-
-      const memberCount = await prisma.customerMembership.count({
-        where: { tierId, isActive: true },
-      });
-
-      if (memberCount > 0) {
-        return json<ActionResponse>(
-          {
-            success: false,
-            error:
-              "Cannot delete tier with active members. Please reassign members first.",
-          },
-          { status: 400 },
-        );
-      }
-
-      await prisma.tier.delete({
+      const name = formData.get("name") as string;
+      const current = await prisma.tier.findUnique({
         where: { id: tierId, shopDomain: session.shop },
       });
+      if (!current) return json<ActionResponse>({ success: false, error: "Not found" }, { status: 404 });
 
-      return json<ActionResponse>({
-        success: true,
-        message: "Tier deleted successfully",
+      if (name && name !== current.name) {
+        const dup = await prisma.tier.findFirst({
+          where: { shopDomain: session.shop, name, id: { not: tierId } },
+        });
+        if (dup) return json<ActionResponse>({ success: false, error: "Name already exists" }, { status: 400 });
+      }
+
+      await prisma.tier.update({
+        where: { id: tierId, shopDomain: session.shop },
+        data: {
+          name: name || current.name,
+          minSpend: formData.get("minSpend") ? parseFloat(formData.get("minSpend") as string) : null,
+          cashbackPercent: parseFloat(formData.get("cashbackPercent") as string),
+          evaluationPeriod: (formData.get("evaluationPeriod") as EvaluationPeriod) || current.evaluationPeriod,
+          isActive: formData.get("isActive") === "true",
+        },
       });
-    } else if (action === "evaluateAll") {
-      const result = await batchEvaluateCustomerTiers(session.shop);
-      return json<ActionResponse>({
-        success: true,
-        message: `Evaluated ${result.totalProcessed} customers. ${result.successful} updated, ${result.failed} failed.`,
-      });
-    } else if (action === "handleExpired") {
-      const results = await handleExpiredMemberships(session.shop);
-      const successful = results.filter((r) => r.success).length;
-      return json<ActionResponse>({
-        success: true,
-        message: `Processed ${results.length} expired memberships. ${successful} updated successfully.`,
-      });
+      return json<ActionResponse>({ success: true, message: "Tier updated" });
+    }
+
+    if (action === "delete") {
+      const tierId = formData.get("tierId") as string;
+      const members = await prisma.customerMembership.count({ where: { tierId, isActive: true } });
+      if (members > 0) {
+        return json<ActionResponse>({ success: false, error: "Has active members" }, { status: 400 });
+      }
+      await prisma.tier.delete({ where: { id: tierId, shopDomain: session.shop } });
+      return json<ActionResponse>({ success: true, message: "Tier deleted" });
+    }
+
+    if (action === "evaluateAll") {
+      const r = await batchEvaluateCustomerTiers(session.shop);
+      return json<ActionResponse>({ success: true, message: `${r.successful} of ${r.totalProcessed} evaluated` });
+    }
+
+    if (action === "handleExpired") {
+      const r = await handleExpiredMemberships(session.shop);
+      return json<ActionResponse>({ success: true, message: `${r.filter((x) => x.success).length} processed` });
     }
   } catch (error) {
-    console.error("Tier operation error:", error);
-    return json<ActionResponse>(
-      { success: false, error: "An error occurred. Please try again." },
-      { status: 500 },
-    );
+    return json<ActionResponse>({ success: false, error: "An error occurred" }, { status: 500 });
   }
 
   return json<ActionResponse>({ success: true });
 }
 
+function formatCurrency(n: number) {
+  return `$${n.toFixed(2)}`;
+}
+
 export default function TierSettings() {
-  const { tiers, stats } = useLoaderData<typeof loader>();
+  const { tiers, hero } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const fetcher = useFetcher();
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [editingTierId, setEditingTierId] = useState<string | null>(null);
+  const [editTier, setEditTier] = useState<any>(null);
   const [bannerVisible, setBannerVisible] = useState(false);
 
   // Edit form state
-  const editingTier = tiers.find((t: any) => t.id === editingTierId);
   const [editName, setEditName] = useState("");
   const [editCashback, setEditCashback] = useState("");
   const [editMinSpend, setEditMinSpend] = useState("");
   const [editEvalPeriod, setEditEvalPeriod] = useState("ANNUAL");
-
-  // Sync edit state when editing tier changes
-  useEffect(() => {
-    if (editingTier) {
-      setEditName(editingTier.name || "");
-      setEditCashback(String(editingTier.cashbackPercent));
-      setEditMinSpend(editingTier.minSpend ? String(editingTier.minSpend) : "");
-      setEditEvalPeriod(editingTier.evaluationPeriod || "ANNUAL");
-    }
-  }, [editingTierId]);
 
   const isSubmitting = navigation.state === "submitting";
 
@@ -259,40 +181,39 @@ export default function TierSettings() {
       setBannerVisible(true);
       if (actionData.success) {
         setShowCreateForm(false);
-        setEditingTierId(null);
+        setEditTier(null);
         const t = setTimeout(() => setBannerVisible(false), 5000);
         return () => clearTimeout(t);
       }
     }
   }, [actionData]);
 
+  useEffect(() => {
+    if (editTier) {
+      setEditName(editTier.name || "");
+      setEditCashback(String(editTier.cashbackPercent));
+      setEditMinSpend(editTier.minSpend ? String(editTier.minSpend) : "");
+      setEditEvalPeriod(editTier.evaluationPeriod || "ANNUAL");
+    }
+  }, [editTier]);
+
   return (
     <Page
-      title="Tier Management"
-      subtitle="Configure customer tiers and rewards"
+      title="Tiers"
       primaryAction={{
-        content: showCreateForm ? "Cancel" : "+ Add Tier",
+        content: showCreateForm ? "Cancel" : "Add Tier",
         onAction: () => setShowCreateForm(!showCreateForm),
-        ...(showCreateForm ? { destructive: true } : {}),
+        destructive: showCreateForm,
       }}
       secondaryActions={[
         {
           content: "Re-evaluate All",
-          onAction: () => {
-            const formData = new FormData();
-            formData.append("_action", "evaluateAll");
-            fetcher.submit(formData, { method: "post" });
-          },
           loading: isSubmitting,
-        },
-        {
-          content: "Process Expired",
           onAction: () => {
-            const formData = new FormData();
-            formData.append("_action", "handleExpired");
-            fetcher.submit(formData, { method: "post" });
+            const fd = new FormData();
+            fd.append("_action", "evaluateAll");
+            fetcher.submit(fd, { method: "post" });
           },
-          loading: isSubmitting,
         },
       ]}
     >
@@ -303,99 +224,45 @@ export default function TierSettings() {
               tone={actionData.success ? "success" : "critical"}
               onDismiss={() => setBannerVisible(false)}
             >
-              {actionData.success ? actionData.message : actionData.error}
+              {"message" in actionData ? actionData.message : "error" in actionData ? actionData.error : ""}
             </Banner>
           </Layout.Section>
         )}
 
-        {/* Stats */}
+        {/* Hero: Active Members */}
         <Layout.Section>
-          <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-            <StatCard
-              title="Active Tiers"
-              value={String(stats.activeTiers)}
-            />
-            <StatCard
-              title="Total Members"
-              value={String(stats.totalMembers)}
-            />
-            <StatCard
-              title="Total Customers"
-              value={String(stats.totalCustomers)}
-            />
-            <StatCard
-              title="Total Cashback Earned"
-              value={`$${stats.totalCashback.toFixed(2)}`}
-            />
-          </InlineGrid>
+          <HeroMetric
+            label="Active Members"
+            value={String(hero.totalMembers)}
+            aside={[
+              { label: "Tiers", value: String(hero.activeTiers) },
+              { label: "Customers", value: String(hero.totalCustomers) },
+              { label: "Cashback Paid", value: formatCurrency(hero.totalCashback) },
+            ]}
+          />
         </Layout.Section>
 
         {/* Create Form */}
         <Layout.Section>
-          <Collapsible open={showCreateForm} id="create-tier-form">
+          <Collapsible open={showCreateForm} id="create-tier">
             <Card>
               <Form method="post">
                 <input type="hidden" name="_action" value="create" />
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">
-                    Create New Tier
-                  </Text>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">New Tier</Text>
                   <FormLayout>
                     <FormLayout.Group>
-                      <TextField
-                        label="Tier Name"
-                        name="name"
-                        requiredIndicator
-                        placeholder="e.g., Silver, Gold, Platinum"
-                        autoComplete="off"
-                      />
-                      <TextField
-                        label="Cashback %"
-                        name="cashbackPercent"
-                        type="number"
-                        requiredIndicator
-                        placeholder="5"
-                        step={0.1}
-                        min={0}
-                        max={100}
-                        autoComplete="off"
-                      />
+                      <TextField label="Name" name="name" requiredIndicator autoComplete="off" />
+                      <TextField label="Cashback %" name="cashbackPercent" type="number" requiredIndicator step={0.1} min={0} max={100} autoComplete="off" />
                     </FormLayout.Group>
                     <FormLayout.Group>
-                      <TextField
-                        label="Minimum Spend"
-                        name="minSpend"
-                        type="number"
-                        placeholder="0.00"
-                        min={0}
-                        step={0.01}
-                        helpText="Leave empty for base tier"
-                        autoComplete="off"
-                      />
-                      <Select
-                        label="Evaluation Period"
-                        name="evaluationPeriod"
-                        requiredIndicator
-                        options={[
-                          {
-                            label: "12-month rolling",
-                            value: "ANNUAL",
-                          },
-                          {
-                            label: "Lifetime (never expires)",
-                            value: "LIFETIME",
-                          },
-                        ]}
-                      />
+                      <TextField label="Min Spend" name="minSpend" type="number" placeholder="None" min={0} step={0.01} helpText="Leave empty for base tier" autoComplete="off" />
+                      <Select label="Period" name="evaluationPeriod" options={[{ label: "12-month", value: "ANNUAL" }, { label: "Lifetime", value: "LIFETIME" }]} />
                     </FormLayout.Group>
                   </FormLayout>
-                  <InlineStack gap="300">
-                    <Button submit loading={isSubmitting} variant="primary">
-                      Create Tier
-                    </Button>
-                    <Button onClick={() => setShowCreateForm(false)}>
-                      Cancel
-                    </Button>
+                  <InlineStack gap="200">
+                    <Button submit variant="primary" loading={isSubmitting}>Create</Button>
+                    <Button onClick={() => setShowCreateForm(false)}>Cancel</Button>
                   </InlineStack>
                 </BlockStack>
               </Form>
@@ -410,216 +277,108 @@ export default function TierSettings() {
               <EmptyState
                 heading="No tiers yet"
                 image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                action={{
-                  content: "Create First Tier",
-                  onAction: () => setShowCreateForm(true),
-                }}
+                action={{ content: "Create First Tier", onAction: () => setShowCreateForm(true) }}
               >
-                <p>
-                  Create your first tier to start rewarding customers
-                </p>
+                <p>Create your first tier to start rewarding customers</p>
               </EmptyState>
             </Card>
           ) : (
-            <Card>
-              <DataTable
-                columnContentTypes={[
-                  "text",
-                  "numeric",
-                  "numeric",
-                  "text",
-                  "numeric",
-                  "numeric",
-                  "text",
-                  "text",
-                ]}
+            <Card padding="0">
+              <IndexTable
+                resourceName={{ singular: "tier", plural: "tiers" }}
+                itemCount={tiers.length}
                 headings={[
-                  "Tier Name",
-                  "Cashback %",
-                  "Min Spend",
-                  "Evaluation",
-                  "Members",
-                  "Avg Yearly Spend",
-                  "Status",
-                  "Actions",
+                  { title: "Tier" },
+                  { title: "Cashback" },
+                  { title: "Min Spend" },
+                  { title: "Period" },
+                  { title: "Members", alignment: "end" },
+                  { title: "Avg Yearly", alignment: "end" },
+                  { title: "Status" },
+                  { title: "", alignment: "end" },
                 ]}
-                rows={tiers.map((tier: any) => {
-                  if (editingTierId === tier.id) {
-                    // Inline edit — just show a single-row form cue; actual edit is below
-                    return [
-                      <Text as="span" fontWeight="bold" key="name">
-                        {tier.name}
-                      </Text>,
-                      `${tier.cashbackPercent}%`,
-                      tier.minSpend
-                        ? `$${tier.minSpend.toFixed(2)}`
-                        : "No minimum",
-                      tier.evaluationPeriod === "LIFETIME"
-                        ? "Lifetime"
-                        : "12-month",
-                      String(tier.memberCount),
-                      `$${tier.avgYearlySpending.toFixed(2)}`,
-                      <Badge
-                        key="status"
-                        tone={tier.isActive ? "success" : "warning"}
-                      >
-                        {tier.isActive ? "Active" : "Inactive"}
-                      </Badge>,
-                      <Text key="editing" as="span" tone="subdued">
-                        Editing...
-                      </Text>,
-                    ];
-                  }
-                  return [
-                    <Text as="span" fontWeight="bold" key="name">
-                      {tier.name}
-                    </Text>,
-                    `${tier.cashbackPercent}%`,
-                    tier.minSpend
-                      ? `$${tier.minSpend.toFixed(2)}`
-                      : "No minimum",
-                    tier.evaluationPeriod === "LIFETIME"
-                      ? "Lifetime"
-                      : "12-month",
-                    String(tier.memberCount),
-                    `$${tier.avgYearlySpending.toFixed(2)}`,
-                    <Badge
-                      key="status"
-                      tone={tier.isActive ? "success" : "warning"}
-                    >
-                      {tier.isActive ? "Active" : "Inactive"}
-                    </Badge>,
-                    <InlineStack gap="200" key="actions">
-                      <Button
-                        size="slim"
-                        variant="plain"
-                        onClick={() => setEditingTierId(tier.id)}
-                      >
-                        Edit
-                      </Button>
-                      <fetcher.Form
-                        method="post"
-                        style={{ display: "inline" }}
-                      >
-                        <input
-                          type="hidden"
-                          name="_action"
-                          value="delete"
-                        />
-                        <input
-                          type="hidden"
-                          name="tierId"
-                          value={tier.id}
-                        />
-                        <Button
-                          size="slim"
-                          variant="plain"
-                          tone="critical"
-                          submit
-                          disabled={tier.memberCount > 0}
-                        >
-                          Delete
-                        </Button>
-                      </fetcher.Form>
-                    </InlineStack>,
-                  ];
-                })}
-              />
-
-              {/* Edit form rendered below the table */}
-              {editingTierId && (
-                <Box padding="400" borderBlockStartWidth="025" borderColor="border">
-                  <Form method="post">
-                    <input type="hidden" name="_action" value="update" />
-                    <input
-                      type="hidden"
-                      name="tierId"
-                      value={editingTierId}
-                    />
-                    <BlockStack gap="400">
-                      <Text as="h3" variant="headingMd">
-                        Edit Tier
+                selectable={false}
+              >
+                {tiers.map((tier: any, i: number) => (
+                  <IndexTable.Row id={tier.id} key={tier.id} position={i}>
+                    <IndexTable.Cell>
+                      <Text as="span" fontWeight="semibold">{tier.name}</Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>{tier.cashbackPercent}%</IndexTable.Cell>
+                    <IndexTable.Cell>
+                      {tier.minSpend ? formatCurrency(tier.minSpend) : "—"}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      {tier.evaluationPeriod === "LIFETIME" ? "Lifetime" : "12-month"}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text as="span" alignment="end">{tier.memberCount}</Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text as="span" alignment="end">
+                        {formatCurrency(tier.avgYearlySpending)}
                       </Text>
-                      <FormLayout>
-                        <FormLayout.Group>
-                          <TextField
-                            label="Tier Name"
-                            name="name"
-                            value={editName}
-                            onChange={setEditName}
-                            requiredIndicator
-                            autoComplete="off"
-                          />
-                          <TextField
-                            label="Cashback %"
-                            name="cashbackPercent"
-                            type="number"
-                            value={editCashback}
-                            onChange={setEditCashback}
-                            requiredIndicator
-                            step={0.1}
-                            min={0}
-                            max={100}
-                            autoComplete="off"
-                          />
-                        </FormLayout.Group>
-                        <FormLayout.Group>
-                          <TextField
-                            label="Minimum Spend"
-                            name="minSpend"
-                            type="number"
-                            value={editMinSpend}
-                            onChange={setEditMinSpend}
-                            placeholder="No minimum"
-                            min={0}
-                            step={0.01}
-                            autoComplete="off"
-                          />
-                          <Select
-                            label="Evaluation Period"
-                            name="evaluationPeriod"
-                            value={editEvalPeriod}
-                            onChange={setEditEvalPeriod}
-                            options={[
-                              {
-                                label: "12-month rolling",
-                                value: "ANNUAL",
-                              },
-                              {
-                                label: "Lifetime",
-                                value: "LIFETIME",
-                              },
-                            ]}
-                          />
-                        </FormLayout.Group>
-                        <input
-                          type="hidden"
-                          name="isActive"
-                          value={editingTier?.isActive ? "true" : "false"}
-                        />
-                      </FormLayout>
-                      <InlineStack gap="300">
-                        <Button
-                          submit
-                          loading={isSubmitting}
-                          variant="primary"
-                        >
-                          Save Changes
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Badge tone={tier.isActive ? "success" : "warning"}>
+                        {tier.isActive ? "Active" : "Inactive"}
+                      </Badge>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <InlineStack gap="200" align="end">
+                        <Button size="slim" variant="plain" onClick={() => setEditTier(tier)}>
+                          Edit
                         </Button>
-                        <Button
-                          onClick={() => setEditingTierId(null)}
-                        >
-                          Cancel
-                        </Button>
+                        <fetcher.Form method="post" style={{ display: "inline" }}>
+                          <input type="hidden" name="_action" value="delete" />
+                          <input type="hidden" name="tierId" value={tier.id} />
+                          <Button size="slim" variant="plain" tone="critical" submit disabled={tier.memberCount > 0}>
+                            Delete
+                          </Button>
+                        </fetcher.Form>
                       </InlineStack>
-                    </BlockStack>
-                  </Form>
-                </Box>
-              )}
+                    </IndexTable.Cell>
+                  </IndexTable.Row>
+                ))}
+              </IndexTable>
             </Card>
           )}
         </Layout.Section>
       </Layout>
+
+      {/* Edit Modal */}
+      <Modal
+        open={!!editTier}
+        onClose={() => setEditTier(null)}
+        title={`Edit: ${editTier?.name}`}
+        primaryAction={{
+          content: "Save",
+          loading: isSubmitting,
+          onAction: () => {
+            if (!editTier) return;
+            const fd = new FormData();
+            fd.append("_action", "update");
+            fd.append("tierId", editTier.id);
+            fd.append("name", editName);
+            fd.append("cashbackPercent", editCashback);
+            fd.append("minSpend", editMinSpend);
+            fd.append("evaluationPeriod", editEvalPeriod);
+            fd.append("isActive", editTier.isActive ? "true" : "false");
+            fetcher.submit(fd, { method: "post" });
+            setEditTier(null);
+          },
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setEditTier(null) }]}
+      >
+        <Modal.Section>
+          <FormLayout>
+            <TextField label="Name" value={editName} onChange={setEditName} autoComplete="off" />
+            <TextField label="Cashback %" value={editCashback} onChange={setEditCashback} type="number" step={0.1} min={0} max={100} autoComplete="off" />
+            <TextField label="Min Spend" value={editMinSpend} onChange={setEditMinSpend} type="number" placeholder="None" min={0} step={0.01} autoComplete="off" />
+            <Select label="Period" value={editEvalPeriod} onChange={setEditEvalPeriod} options={[{ label: "12-month", value: "ANNUAL" }, { label: "Lifetime", value: "LIFETIME" }]} />
+          </FormLayout>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

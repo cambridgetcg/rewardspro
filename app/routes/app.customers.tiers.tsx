@@ -12,19 +12,19 @@ import {
   Page,
   Layout,
   Card,
-  DataTable,
-  Button,
+  IndexTable,
   TextField,
   Select,
   BlockStack,
-  InlineGrid,
   Text,
   Banner,
   Modal,
-  EmptyState,
+  EmptySearchResult,
   Box,
   InlineStack,
   Pagination,
+  Badge,
+  useIndexResourceState,
 } from "@shopify/polaris";
 import { useState, useCallback, useEffect } from "react";
 import { authenticate } from "../shopify.server";
@@ -34,7 +34,7 @@ import {
   assignTierManually,
   evaluateCustomerTier,
 } from "../services/customer-tier.server";
-import { StatCard } from "../components/StatCard";
+import { HeroMetric } from "../components/HeroMetric";
 
 const PAGE_SIZE = 25;
 
@@ -48,6 +48,7 @@ interface CustomerRow {
   tierCashbackPercent: number | null;
   tierId: string | null;
   annualSpending: number;
+  lastSyncedAt: string | null;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -59,10 +60,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const search = url.searchParams.get("search") || "";
   const tierFilter = url.searchParams.get("tier") || "all";
 
-  // Build where clause
   const where: any = { shopDomain };
   if (search) {
-    where.email = { contains: search, mode: "insensitive" };
+    where.OR = [
+      { email: { contains: search, mode: "insensitive" } },
+      { shopifyCustomerId: { contains: search } },
+    ];
   }
   if (tierFilter === "none") {
     where.membershipHistory = { none: { isActive: true } };
@@ -72,8 +75,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
 
-  // Parallel: total count + paginated customers + stats + tiers
-  const [totalCount, customers, stats, tiers] = await Promise.all([
+  const [totalCount, customers, heroStats, tiers] = await Promise.all([
     prisma.customer.count({ where }),
     prisma.customer.findMany({
       where,
@@ -88,77 +90,71 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         },
       },
     }),
-    prisma.customer.aggregate({
-      where: { shopDomain },
-      _count: true,
-    }).then(async (total) => {
-      const [withCredit, withTiers] = await Promise.all([
-        prisma.customer.count({
-          where: { shopDomain, storeCredit: { gt: 0 } },
-        }),
-        prisma.customerMembership.groupBy({
-          by: ["customerId"],
-          where: {
-            isActive: true,
-            customer: { shopDomain },
-          },
-        }).then((g) => g.length),
-      ]);
-      return {
-        totalCustomers: total._count,
-        customersWithCredit: withCredit,
-        customersWithTiers: withTiers,
-      };
-    }),
+    Promise.all([
+      prisma.customer.aggregate({
+        where: { shopDomain },
+        _sum: { storeCredit: true },
+        _count: true,
+      }),
+      prisma.customer.count({
+        where: { shopDomain, storeCredit: { gt: 0 } },
+      }),
+      prisma.customerMembership.groupBy({
+        by: ["customerId"],
+        where: { isActive: true, customer: { shopDomain } },
+      }),
+    ]).then(([agg, withCredit, tiered]) => ({
+      totalCustomers: agg._count,
+      totalCredit: agg._sum.storeCredit || 0,
+      withCredit,
+      withTiers: tiered.length,
+    })),
     prisma.tier.findMany({
       where: { shopDomain, isActive: true },
       orderBy: { cashbackPercent: "asc" },
     }),
   ]);
 
-  // Get annual spending for these specific customers via aggregate
+  // Annual spending for this page of customers
   const customerIds = customers.map((c) => c.id);
   const spendingByCustomer: Record<string, number> = {};
-
   if (customerIds.length > 0) {
-    const spendingResults = await prisma.cashbackTransaction.groupBy({
+    const results = await prisma.cashbackTransaction.groupBy({
       by: ["customerId"],
       where: {
         customerId: { in: customerIds },
         createdAt: { gte: oneYearAgo },
-        status: {
-          in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY],
-        },
+        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] },
       },
       _sum: { orderAmount: true },
     });
-    for (const r of spendingResults) {
+    for (const r of results) {
       spendingByCustomer[r.customerId] = r._sum.orderAmount || 0;
     }
   }
 
-  const rows: CustomerRow[] = customers.map((customer) => {
-    const membership = customer.membershipHistory[0];
+  const rows: CustomerRow[] = customers.map((c) => {
+    const m = c.membershipHistory[0];
     return {
-      id: customer.id,
-      email: customer.email,
-      shopifyCustomerId: customer.shopifyCustomerId,
-      storeCredit: customer.storeCredit,
-      totalEarned: customer.totalEarned,
-      tierName: membership?.tier?.name ?? null,
-      tierCashbackPercent: membership?.tier?.cashbackPercent ?? null,
-      tierId: membership?.tier?.id ?? null,
-      annualSpending: spendingByCustomer[customer.id] || 0,
+      id: c.id,
+      email: c.email,
+      shopifyCustomerId: c.shopifyCustomerId,
+      storeCredit: c.storeCredit,
+      totalEarned: c.totalEarned,
+      tierName: m?.tier?.name ?? null,
+      tierCashbackPercent: m?.tier?.cashbackPercent ?? null,
+      tierId: m?.tier?.id ?? null,
+      annualSpending: spendingByCustomer[c.id] || 0,
+      lastSyncedAt: c.lastSyncedAt?.toISOString() ?? null,
     };
   });
 
   return json({
     customers: rows,
     tiers,
-    stats,
+    heroStats,
     pagination: {
       page,
-      pageSize: PAGE_SIZE,
       totalCount,
       totalPages: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
     },
@@ -172,163 +168,105 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const actionType = formData.get("actionType") as string;
 
-  if (actionType === "assignTier") {
-    const customerId = formData.get("customerId") as string;
-    const tierId = formData.get("tierId") as string;
-    const reason =
-      (formData.get("reason") as string) || "Manual assignment via admin";
-
-    try {
-      await assignTierManually(
-        customerId,
-        tierId,
-        shopDomain,
-        `${shopDomain}-admin`,
-        reason,
-      );
-      return json({ success: true, message: "Tier assigned successfully" });
-    } catch (error) {
-      return json({
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to assign tier",
-      });
-    }
-  }
-
-  if (actionType === "evaluateTier") {
-    const customerId = formData.get("customerId") as string;
-    try {
-      await evaluateCustomerTier(customerId, shopDomain);
-      return json({ success: true, message: "Customer tier evaluated" });
-    } catch (error) {
-      return json({
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to evaluate tier",
-      });
-    }
-  }
-
   if (actionType === "evaluateAll") {
     try {
-      const customers = await prisma.customer.findMany({
+      const ids = await prisma.customer.findMany({
         where: { shopDomain },
         select: { id: true },
       });
       let evaluated = 0;
-      for (const customer of customers) {
-        await evaluateCustomerTier(customer.id, shopDomain);
+      for (const { id } of ids) {
+        await evaluateCustomerTier(id, shopDomain);
         evaluated++;
       }
+      return json({ success: true, message: `Evaluated ${evaluated} customers` });
+    } catch (error) {
+      return json({
+        success: false,
+        error: error instanceof Error ? error.message : "Failed",
+      });
+    }
+  }
+
+  if (actionType === "credit") {
+    const customerId = formData.get("customerId") as string;
+    const amount = parseFloat(formData.get("amount") as string);
+    const creditAction = formData.get("creditAction") as string;
+
+    if (!customerId || !amount || amount <= 0) {
+      return json({ success: false, error: "Invalid amount" });
+    }
+
+    try {
+      const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+      if (!customer || customer.shopDomain !== shopDomain) throw new Error("Not found");
+
+      const mutation = creditAction === "add"
+        ? `#graphql
+          mutation c($id: ID!, $i: StoreCreditAccountCreditInput!) {
+            storeCreditAccountCredit(id: $id, creditInput: $i) {
+              storeCreditAccountTransaction { id } userErrors { message }
+            }
+          }`
+        : `#graphql
+          mutation d($id: ID!, $i: StoreCreditAccountDebitInput!) {
+            storeCreditAccountDebit(id: $id, debitInput: $i) {
+              storeCreditAccountTransaction { id } userErrors { message }
+            }
+          }`;
+
+      const inputKey = creditAction === "add" ? "creditAmount" : "debitAmount";
+      const resp = await admin.graphql(mutation, {
+        variables: {
+          id: `gid://shopify/Customer/${customer.shopifyCustomerId}`,
+          i: { [inputKey]: { amount: amount.toFixed(2), currencyCode: "USD" } },
+        },
+      });
+      const gql = await resp.json();
+      const res = creditAction === "add"
+        ? gql.data?.storeCreditAccountCredit
+        : gql.data?.storeCreditAccountDebit;
+
+      if (res?.userErrors?.length > 0) throw new Error(res.userErrors[0].message);
+
+      const delta = creditAction === "add" ? amount : -amount;
+      await prisma.$transaction([
+        prisma.storeCreditLedger.create({
+          data: {
+            customerId, shopDomain, amount: delta,
+            balance: customer.storeCredit + delta,
+            type: "MANUAL_ADJUSTMENT", source: "APP_MANUAL",
+            shopifyReference: res?.storeCreditAccountTransaction?.id,
+            description: `Manual ${creditAction}`, reconciledAt: new Date(),
+          },
+        }),
+        prisma.customer.update({
+          where: { id: customerId },
+          data: { storeCredit: customer.storeCredit + delta },
+        }),
+      ]);
+
       return json({
         success: true,
-        message: `Evaluated ${evaluated} customers`,
+        message: `$${amount.toFixed(2)} ${creditAction === "add" ? "added to" : "removed from"} ${customer.email}`,
       });
     } catch (error) {
       return json({
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to evaluate tiers",
+        error: error instanceof Error ? error.message : "Failed",
       });
     }
   }
 
-  // Handle store credit adjustment
-  const customerId = formData.get("customerId") as string;
-  const amount = parseFloat(formData.get("amount") as string);
-  const creditAction = formData.get("creditAction") as string;
-
-  if (!customerId || !amount || amount <= 0) {
-    return json({ success: false, error: "Invalid amount" });
-  }
-
-  try {
-    const customer = await prisma.customer.findUnique({
-      where: { id: customerId },
-    });
-
-    if (!customer || customer.shopDomain !== shopDomain) {
-      throw new Error("Customer not found");
-    }
-
-    const mutation =
-      creditAction === "add"
-        ? `#graphql
-        mutation storeCreditAccountCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
-          storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
-            storeCreditAccountTransaction { id }
-            userErrors { message }
-          }
-        }`
-        : `#graphql
-        mutation storeCreditAccountDebit($id: ID!, $debitInput: StoreCreditAccountDebitInput!) {
-          storeCreditAccountDebit(id: $id, debitInput: $debitInput) {
-            storeCreditAccountTransaction { id }
-            userErrors { message }
-          }
-        }`;
-
-    const variables =
-      creditAction === "add"
-        ? {
-            id: `gid://shopify/Customer/${customer.shopifyCustomerId}`,
-            creditInput: {
-              creditAmount: {
-                amount: amount.toFixed(2),
-                currencyCode: "USD",
-              },
-            },
-          }
-        : {
-            id: `gid://shopify/Customer/${customer.shopifyCustomerId}`,
-            debitInput: {
-              debitAmount: {
-                amount: amount.toFixed(2),
-                currencyCode: "USD",
-              },
-            },
-          };
-
-    const response = await admin.graphql(mutation, { variables });
-    const result = await response.json();
-
-    const mutationResult =
-      creditAction === "add"
-        ? result.data?.storeCreditAccountCredit
-        : result.data?.storeCreditAccountDebit;
-
-    if (mutationResult?.userErrors?.length > 0) {
-      throw new Error(mutationResult.userErrors[0].message);
-    }
-
-    const newBalance =
-      creditAction === "add"
-        ? customer.storeCredit + amount
-        : customer.storeCredit - amount;
-
-    await prisma.customer.update({
-      where: { id: customerId },
-      data: { storeCredit: newBalance },
-    });
-
-    return json({
-      success: true,
-      message: `Successfully ${creditAction === "add" ? "added" : "removed"} $${amount.toFixed(2)}`,
-    });
-  } catch (error) {
-    return json({
-      success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to adjust credit",
-    });
-  }
+  return json({ success: false, error: "Unknown action" });
 };
 
-export default function CustomerTiers() {
-  const { customers, tiers, stats, pagination, filters } =
+function formatCurrency(n: number) {
+  return `$${n.toFixed(2)}`;
+}
+
+export default function Customers() {
+  const { customers, tiers, heroStats, pagination, filters } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
@@ -337,18 +275,18 @@ export default function CustomerTiers() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [modalActive, setModalActive] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] =
-    useState<CustomerRow | null>(null);
-  const [creditAmount, setCreditAmount] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
   const [creditAction, setCreditAction] = useState<"add" | "remove">("add");
+  const [creditAmount, setCreditAmount] = useState("");
   const [bannerVisible, setBannerVisible] = useState(false);
 
   const isSubmitting = navigation.state === "submitting";
 
-  // Show banner on action result
   useEffect(() => {
     if (actionData) {
       setBannerVisible(true);
+      setModalActive(false);
+      setCreditAmount("");
       if (actionData.success) {
         const t = setTimeout(() => setBannerVisible(false), 5000);
         return () => clearTimeout(t);
@@ -359,41 +297,29 @@ export default function CustomerTiers() {
   const updateFilter = useCallback(
     (key: string, value: string) => {
       const params = new URLSearchParams(searchParams);
-      if (value && value !== "all" && value !== "") {
-        params.set(key, value);
-      } else {
-        params.delete(key);
-      }
-      // Reset to page 1 on filter change
-      if (key !== "page") {
-        params.delete("page");
-      }
+      if (value && value !== "all" && value !== "") params.set(key, value);
+      else params.delete(key);
+      if (key !== "page") params.delete("page");
       setSearchParams(params);
     },
     [searchParams, setSearchParams],
   );
 
-  const rows = customers.map((customer) => [
-    customer.email,
-    customer.tierName
-      ? `${customer.tierName} (${customer.tierCashbackPercent}%)`
-      : "—",
-    `$${customer.storeCredit.toFixed(2)}`,
-    `$${customer.annualSpending.toFixed(2)}`,
-    customer.id,
-  ]);
+  const resourceName = { singular: "customer", plural: "customers" };
+  const { selectedResources, allResourcesSelected, handleSelectionChange } =
+    useIndexResourceState(customers);
 
   return (
     <Page
-      title="Customer Tiers"
+      title="Customers"
       primaryAction={{
         content: "Evaluate All Tiers",
-        onAction: () => {
-          const formData = new FormData();
-          formData.append("actionType", "evaluateAll");
-          submit(formData, { method: "post" });
-        },
         loading: isSubmitting,
+        onAction: () => {
+          const fd = new FormData();
+          fd.append("actionType", "evaluateAll");
+          submit(fd, { method: "post" });
+        },
       }}
     >
       <Layout>
@@ -403,189 +329,212 @@ export default function CustomerTiers() {
               tone={actionData.success ? "success" : "critical"}
               onDismiss={() => setBannerVisible(false)}
             >
-              {actionData.success && "message" in actionData
-                ? actionData.message
-                : ""}
-              {!actionData.success && "error" in actionData
-                ? actionData.error
-                : ""}
+              {"message" in actionData ? actionData.message : ""}
+              {"error" in actionData ? actionData.error : ""}
             </Banner>
           </Layout.Section>
         )}
 
+        {/* Hero: Total Store Credit Outstanding */}
         <Layout.Section>
-          <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
-            <StatCard
-              title="Total Customers"
-              value={String(stats.totalCustomers)}
-            />
-            <StatCard
-              title="With Tiers"
-              value={String(stats.customersWithTiers)}
-            />
-            <StatCard
-              title="Have Store Credit"
-              value={String(stats.customersWithCredit)}
-            />
-          </InlineGrid>
+          <HeroMetric
+            label="Total Store Credit Outstanding"
+            value={formatCurrency(heroStats.totalCredit)}
+            aside={[
+              { label: "Customers", value: String(heroStats.totalCustomers) },
+              { label: "With Credit", value: String(heroStats.withCredit) },
+              { label: "With Tiers", value: String(heroStats.withTiers) },
+            ]}
+          />
         </Layout.Section>
 
+        {/* Filters + Table */}
         <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
-                <TextField
-                  label="Search customers"
-                  value={filters.search}
-                  onChange={(v) => updateFilter("search", v)}
-                  placeholder="Email address..."
-                  autoComplete="off"
-                  clearButton
-                  onClearButtonClick={() => updateFilter("search", "")}
-                />
-                <Select
-                  label="Filter by tier"
-                  options={[
-                    { label: "All customers", value: "all" },
-                    { label: "No tier", value: "none" },
-                    ...tiers.map((tier) => ({
-                      label: `${tier.name} (${tier.cashbackPercent}%)`,
-                      value: tier.id,
-                    })),
-                  ]}
-                  value={filters.tier}
-                  onChange={(v) => updateFilter("tier", v)}
-                />
-              </InlineGrid>
-
-              {customers.length > 0 ? (
-                <>
-                  <DataTable
-                    columnContentTypes={[
-                      "text",
-                      "text",
-                      "numeric",
-                      "numeric",
-                      "text",
-                    ]}
-                    headings={[
-                      "Customer",
-                      "Current Tier",
-                      "Store Credit",
-                      "Annual Spending",
-                      "Actions",
-                    ]}
-                    rows={rows.map((row) => {
-                      const customerId = row[4] as string;
-                      const customer = customers.find(
-                        (c) => c.id === customerId,
-                      );
-                      return [
-                        ...row.slice(0, 4),
-                        <BlockStack gap="200" key={customerId}>
-                          <Button
-                            size="slim"
-                            onClick={() => {
-                              setSelectedCustomer(customer!);
-                              setModalActive(true);
-                            }}
-                          >
-                            Adjust Credit
-                          </Button>
-                          <Button
-                            size="slim"
-                            variant="plain"
-                            onClick={() =>
-                              navigate(`/app/customers/${customerId}`)
-                            }
-                          >
-                            View Details
-                          </Button>
-                        </BlockStack>,
-                      ];
-                    })}
+          <Card padding="0">
+            <Box padding="300">
+              <InlineStack gap="300">
+                <div style={{ flex: 1 }}>
+                  <TextField
+                    label=""
+                    labelHidden
+                    value={filters.search}
+                    onChange={(v) => updateFilter("search", v)}
+                    placeholder="Search by email or ID..."
+                    autoComplete="off"
+                    clearButton
+                    onClearButtonClick={() => updateFilter("search", "")}
                   />
+                </div>
+                <div style={{ width: "200px" }}>
+                  <Select
+                    label=""
+                    labelHidden
+                    options={[
+                      { label: "All tiers", value: "all" },
+                      { label: "No tier", value: "none" },
+                      ...tiers.map((t) => ({
+                        label: `${t.name} (${t.cashbackPercent}%)`,
+                        value: t.id,
+                      })),
+                    ]}
+                    value={filters.tier}
+                    onChange={(v) => updateFilter("tier", v)}
+                  />
+                </div>
+              </InlineStack>
+            </Box>
 
-                  <Box padding="400">
-                    <InlineStack align="center" gap="400">
-                      <Pagination
-                        hasPrevious={pagination.page > 1}
-                        hasNext={pagination.page < pagination.totalPages}
-                        onPrevious={() =>
-                          updateFilter(
-                            "page",
-                            String(pagination.page - 1),
-                          )
-                        }
-                        onNext={() =>
-                          updateFilter(
-                            "page",
-                            String(pagination.page + 1),
-                          )
-                        }
-                      />
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        Page {pagination.page} of {pagination.totalPages} (
-                        {pagination.totalCount} customers)
-                      </Text>
+            <IndexTable
+              resourceName={resourceName}
+              itemCount={customers.length}
+              selectedItemsCount={
+                allResourcesSelected ? "All" : selectedResources.length
+              }
+              onSelectionChange={handleSelectionChange}
+              headings={[
+                { title: "Customer" },
+                { title: "Tier" },
+                { title: "Store Credit", alignment: "end" },
+                { title: "Annual Spending", alignment: "end" },
+                { title: "" },
+              ]}
+              selectable={false}
+              emptyState={
+                <EmptySearchResult
+                  title="No customers found"
+                  description="Try adjusting your search or filters"
+                  withIllustration
+                />
+              }
+            >
+              {customers.map((c, i) => (
+                <IndexTable.Row
+                  id={c.id}
+                  key={c.id}
+                  position={i}
+                  onClick={() => navigate(`/app/customers/${c.id}`)}
+                >
+                  <IndexTable.Cell>
+                    <Text as="span" variant="bodyMd" fontWeight="semibold">
+                      {c.email}
+                    </Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    {c.tierName ? (
+                      <Badge>{`${c.tierName} (${c.tierCashbackPercent ?? 0}%)`}</Badge>
+                    ) : (
+                      <Text as="span" tone="subdued">—</Text>
+                    )}
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text
+                      as="span"
+                      alignment="end"
+                      fontWeight={c.storeCredit > 0 ? "semibold" : "regular"}
+                      tone={c.storeCredit > 0 ? "success" : "subdued"}
+                    >
+                      {formatCurrency(c.storeCredit)}
+                    </Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" alignment="end">
+                      {formatCurrency(c.annualSpending)}
+                    </Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <InlineStack gap="200" align="end">
+                      <button
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "#2e7d32",
+                          cursor: "pointer",
+                          fontSize: "13px",
+                          fontWeight: 500,
+                          padding: "4px 8px",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedCustomer(c);
+                          setCreditAction("add");
+                          setModalActive(true);
+                        }}
+                      >
+                        + Add
+                      </button>
+                      <button
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: c.storeCredit > 0 ? "#c62828" : "#ccc",
+                          cursor: c.storeCredit > 0 ? "pointer" : "default",
+                          fontSize: "13px",
+                          fontWeight: 500,
+                          padding: "4px 8px",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (c.storeCredit > 0) {
+                            setSelectedCustomer(c);
+                            setCreditAction("remove");
+                            setModalActive(true);
+                          }
+                        }}
+                      >
+                        − Remove
+                      </button>
                     </InlineStack>
-                  </Box>
-                </>
-              ) : (
-                <EmptyState heading="No customers found" image="">
-                  <p>Try adjusting your search or filters</p>
-                </EmptyState>
-              )}
-            </BlockStack>
+                  </IndexTable.Cell>
+                </IndexTable.Row>
+              ))}
+            </IndexTable>
+
+            {pagination.totalPages > 1 && (
+              <Box padding="300" borderBlockStartWidth="025" borderColor="border">
+                <InlineStack align="center" gap="300">
+                  <Pagination
+                    hasPrevious={pagination.page > 1}
+                    hasNext={pagination.page < pagination.totalPages}
+                    onPrevious={() => updateFilter("page", String(pagination.page - 1))}
+                    onNext={() => updateFilter("page", String(pagination.page + 1))}
+                  />
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {pagination.page} / {pagination.totalPages} ({pagination.totalCount})
+                  </Text>
+                </InlineStack>
+              </Box>
+            )}
           </Card>
         </Layout.Section>
       </Layout>
 
+      {/* Credit Modal */}
       <Modal
         open={modalActive}
         onClose={() => setModalActive(false)}
-        title={`Adjust Store Credit: ${selectedCustomer?.email}`}
+        title={`${creditAction === "add" ? "Add" : "Remove"} Credit — ${selectedCustomer?.email}`}
         primaryAction={{
-          content:
-            creditAction === "add" ? "Add Credit" : "Remove Credit",
-          onAction: () => {
-            if (selectedCustomer && creditAmount) {
-              const formData = new FormData();
-              formData.append("actionType", "credit");
-              formData.append("customerId", selectedCustomer.id);
-              formData.append("amount", creditAmount);
-              formData.append("creditAction", creditAction);
-              submit(formData, { method: "post" });
-              setModalActive(false);
-              setCreditAmount("");
-            }
-          },
-          disabled: !creditAmount || parseFloat(creditAmount) <= 0,
+          content: creditAction === "add" ? "Add Credit" : "Remove Credit",
+          destructive: creditAction === "remove",
           loading: isSubmitting,
-        }}
-        secondaryActions={[
-          {
-            content: "Cancel",
-            onAction: () => setModalActive(false),
+          disabled: !creditAmount || parseFloat(creditAmount) <= 0,
+          onAction: () => {
+            if (!selectedCustomer || !creditAmount) return;
+            const fd = new FormData();
+            fd.append("actionType", "credit");
+            fd.append("customerId", selectedCustomer.id);
+            fd.append("amount", creditAmount);
+            fd.append("creditAction", creditAction);
+            submit(fd, { method: "post" });
           },
-        ]}
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setModalActive(false) }]}
       >
         <Modal.Section>
-          <BlockStack gap="400">
-            <Text as="p" variant="bodyMd">
-              Current balance: ${selectedCustomer?.storeCredit.toFixed(2)}
+          <BlockStack gap="300">
+            <Text as="p">
+              Current balance: {formatCurrency(selectedCustomer?.storeCredit || 0)}
             </Text>
-            <Select
-              label="Action"
-              options={[
-                { label: "Add credit", value: "add" },
-                { label: "Remove credit", value: "remove" },
-              ]}
-              value={creditAction}
-              onChange={(value) =>
-                setCreditAction(value as "add" | "remove")
-              }
-            />
             <TextField
               label="Amount (USD)"
               type="number"

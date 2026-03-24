@@ -7,338 +7,262 @@ import {
   Card,
   Text,
   BlockStack,
-  Button,
-  Banner,
-  List,
-  Badge,
   InlineGrid,
+  InlineStack,
+  Badge,
   Box,
-  CalloutCard,
-  MediaCard,
-  VideoThumbnail,
-  Icon,
+  Banner,
+  Button,
+  DataTable,
+  Divider,
 } from "@shopify/polaris";
-import {
-  CheckCircleIcon,
-  AlertCircleIcon,
-  StoreIcon,
-  CodeIcon,
-  ViewIcon,
-} from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { TransactionStatus } from "@prisma/client";
+import { HeroMetric } from "../components/HeroMetric";
+import { StatCard } from "../components/StatCard";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  
-  // Get basic stats to show setup progress
-  const [hasCustomers, hasTiers, hasTransactions] = await Promise.all([
-    prisma.customer.count().then(count => count > 0),
-    prisma.tier.count({ where: { shopDomain: session.shop } }).then(count => count > 0),
-    prisma.cashbackTransaction.count().then(count => count > 0),
-  ]);
+  const shopDomain = session.shop;
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
-  const setupProgress = {
-    hasCustomers,
+  const [
+    totalCustomers,
+    totalMembers,
     hasTiers,
     hasTransactions,
-    widgetInstalled: false // We can't automatically detect this
-  };
+    currentRevenue,
+    lastRevenue,
+    totalCredit,
+    creditEarned30d,
+    recentTransactions,
+  ] = await Promise.all([
+    prisma.customer.count({ where: { shopDomain } }),
+    prisma.customer.count({
+      where: { shopDomain, membershipHistory: { some: { isActive: true } } },
+    }),
+    prisma.tier.count({ where: { shopDomain, isActive: true } }).then((c) => c > 0),
+    prisma.cashbackTransaction.count({ where: { shopDomain } }).then((c) => c > 0),
+    prisma.cashbackTransaction.aggregate({
+      where: {
+        shopDomain,
+        createdAt: { gte: thirtyDaysAgo },
+        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] },
+      },
+      _sum: { orderAmount: true, cashbackAmount: true },
+      _count: true,
+    }),
+    prisma.cashbackTransaction.aggregate({
+      where: {
+        shopDomain,
+        createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo },
+        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] },
+      },
+      _sum: { orderAmount: true },
+    }),
+    prisma.customer.aggregate({
+      where: { shopDomain },
+      _sum: { storeCredit: true },
+    }),
+    prisma.cashbackTransaction.aggregate({
+      where: { shopDomain, createdAt: { gte: thirtyDaysAgo } },
+      _sum: { cashbackAmount: true },
+    }),
+    prisma.cashbackTransaction.findMany({
+      where: {
+        shopDomain,
+        status: { in: [TransactionStatus.COMPLETED, TransactionStatus.SYNCED_TO_SHOPIFY] },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      include: { customer: { select: { email: true } } },
+    }),
+  ]);
+
+  const currentRev = currentRevenue._sum.orderAmount || 0;
+  const lastRev = lastRevenue._sum.orderAmount || 0;
+  const mom = lastRev > 0 ? ((currentRev - lastRev) / lastRev) * 100 : 0;
 
   return json({
-    shopDomain: session.shop,
-    setupProgress
+    shopDomain,
+    setup: { hasTiers, hasTransactions, hasCustomers: totalCustomers > 0 },
+    hero: {
+      revenue30d: currentRev,
+      mom,
+      orders30d: currentRevenue._count,
+      cashback30d: currentRevenue._sum.cashbackAmount || 0,
+    },
+    stats: {
+      totalCustomers,
+      totalMembers,
+      totalCredit: totalCredit._sum.storeCredit || 0,
+      creditEarned30d: creditEarned30d._sum.cashbackAmount || 0,
+    },
+    recentTransactions: recentTransactions.map((t) => ({
+      id: t.id,
+      email: t.customer.email,
+      orderId: t.shopifyOrderId,
+      amount: t.orderAmount,
+      cashback: t.cashbackAmount,
+      date: t.createdAt,
+    })),
   });
 };
 
-export default function Index() {
-  const { shopDomain, setupProgress } = useLoaderData<typeof loader>();
-  
-  const setupSteps = [
-    {
-      completed: setupProgress.hasTiers,
-      title: "Configure Cashback Tiers",
-      description: "Set up your reward tiers with different cashback percentages",
-      action: "/app/tiers"
-    },
-    {
-      completed: false, // Widget installation can't be auto-detected
-      title: "Install RewardsPro Widget",
-      description: "Add the widget to your store theme to display cashback rates",
-      action: null
-    },
-    {
-      completed: setupProgress.hasCustomers,
-      title: "Import Customers",
-      description: "Your customers will be automatically synced when they make purchases",
-      action: "/app/customers/tiers"
-    },
-    {
-      completed: setupProgress.hasTransactions,
-      title: "Process First Transaction",
-      description: "Cashback will be calculated automatically on new orders",
-      action: null
-    }
-  ];
+function fmt(n: number) {
+  return `$${n.toFixed(2)}`;
+}
 
-  const completedSteps = setupSteps.filter(step => step.completed).length;
-  const totalSteps = setupSteps.length;
-  const setupComplete = completedSteps === totalSteps;
+export default function Dashboard() {
+  const { setup, hero, stats, recentTransactions } =
+    useLoaderData<typeof loader>();
+
+  const needsSetup = !setup.hasTiers;
 
   return (
-    <Page title="Welcome to RewardsPro">
+    <Page title="Dashboard">
       <Layout>
-        {/* Setup Progress Banner */}
-        <Layout.Section>
-          <Banner
-            title="Setup Progress"
-            tone={setupComplete ? "success" : "info"}
-            icon={setupComplete ? CheckCircleIcon : AlertCircleIcon}
-          >
-            <Text as="p">
-              {setupComplete 
-                ? "Great! Your RewardsPro app is fully configured."
-                : `You've completed ${completedSteps} of ${totalSteps} setup steps.`}
-            </Text>
-          </Banner>
-        </Layout.Section>
-
-        {/* Widget Installation Guide */}
-        <Layout.Section>
-          <CalloutCard
-            title="🎯 Critical Setup: Install the RewardsPro Widget"
-            illustration="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-            primaryAction={{
-              content: "Open Theme Customizer",
-              url: `https://${shopDomain}/admin/themes/current/editor`,
-              external: true,
-            }}
-          >
-            <Text as="p" variant="bodyMd">
-              The RewardsPro widget displays cashback rates to your customers on product pages. 
-              Without it, customers won't see their potential rewards!
-            </Text>
-          </CalloutCard>
-        </Layout.Section>
-
-        {/* Installation Steps */}
-        <Layout.Section>
-          <Card>
-            <Box padding="400">
-              <BlockStack gap="500">
-                <Text as="h2" variant="headingLg">
-                  How to Install the Widget (2 minutes)
-                </Text>
-                
-                <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
-                  <Card>
-                    <Box padding="400">
-                      <BlockStack gap="300">
-                        <div style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          width: '48px',
-                          height: '48px',
-                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                          borderRadius: '12px',
-                          marginBottom: '8px'
-                        }}>
-                          <Icon source={StoreIcon} tone="base" />
-                        </div>
-                        <Text as="h3" variant="headingMd">
-                          Step 1: Open Theme Editor
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          Click "Open Theme Customizer" above or go to:
-                        </Text>
-                        <Badge tone="info">
-                          Online Store → Themes → Customize
-                        </Badge>
-                      </BlockStack>
-                    </Box>
-                  </Card>
-
-                  <Card>
-                    <Box padding="400">
-                      <BlockStack gap="300">
-                        <div style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          width: '48px',
-                          height: '48px',
-                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                          borderRadius: '12px',
-                          marginBottom: '8px'
-                        }}>
-                          <Icon source={CodeIcon} tone="base" />
-                        </div>
-                        <Text as="h3" variant="headingMd">
-                          Step 2: Add App Block
-                        </Text>
-                        <List type="bullet">
-                          <List.Item>Navigate to a product page</List.Item>
-                          <List.Item>Click "Add block" in the product section</List.Item>
-                          <List.Item>Search for "RewardsPro"</List.Item>
-                          <List.Item>Select "Rewards Widget"</List.Item>
-                        </List>
-                      </BlockStack>
-                    </Box>
-                  </Card>
-
-                  <Card>
-                    <Box padding="400">
-                      <BlockStack gap="300">
-                        <div style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          width: '48px',
-                          height: '48px',
-                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                          borderRadius: '12px',
-                          marginBottom: '8px'
-                        }}>
-                          <Icon source={ViewIcon} tone="base" />
-                        </div>
-                        <Text as="h3" variant="headingMd">
-                          Step 3: Position & Save
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          Drag the widget to your preferred position (we recommend below the "Add to Cart" button), then click "Save" in the top right.
-                        </Text>
-                      </BlockStack>
-                    </Box>
-                  </Card>
-                </InlineGrid>
-
-                <Banner tone="warning">
-                  <Text as="p" fontWeight="semibold">
-                    Important: The widget must be added to display cashback percentages to customers!
+        {/* Setup banner — dismissible, not the whole page */}
+        {needsSetup && (
+          <Layout.Section>
+            <Banner
+              title="Finish setting up RewardsPro"
+              tone="warning"
+              action={{ content: "Configure Tiers", url: "/app/tiers" }}
+            >
+              <BlockStack gap="100">
+                {!setup.hasTiers && (
+                  <Text as="p">
+                    → Create at least one cashback tier to start rewarding customers.
                   </Text>
-                </Banner>
+                )}
+                {!setup.hasTransactions && setup.hasTiers && (
+                  <Text as="p">
+                    → Cashback will be calculated automatically when orders come in, or import historical orders.
+                  </Text>
+                )}
               </BlockStack>
+            </Banner>
+          </Layout.Section>
+        )}
+
+        {/* Hero: Revenue this month */}
+        <Layout.Section>
+          <HeroMetric
+            label="Revenue (30 days)"
+            value={fmt(hero.revenue30d)}
+            change={
+              hero.mom !== 0
+                ? {
+                    value: `${Math.abs(hero.mom).toFixed(1)}% MoM`,
+                    trend: hero.mom > 0 ? "up" : "down",
+                  }
+                : undefined
+            }
+            aside={[
+              { label: "Orders", value: String(hero.orders30d) },
+              { label: "Cashback Paid", value: fmt(hero.cashback30d) },
+            ]}
+          />
+        </Layout.Section>
+
+        {/* Key metrics */}
+        <Layout.Section>
+          <InlineGrid columns={{ xs: 2, sm: 4 }} gap="300">
+            <StatCard title="Customers" value={String(stats.totalCustomers)} />
+            <StatCard title="Members" value={String(stats.totalMembers)} />
+            <StatCard title="Credit Outstanding" value={fmt(stats.totalCredit)} />
+            <StatCard title="Credit Earned (30d)" value={fmt(stats.creditEarned30d)} />
+          </InlineGrid>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Divider />
+        </Layout.Section>
+
+        {/* Recent Transactions */}
+        <Layout.Section>
+          <Card padding="0">
+            <Box padding="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Recent Transactions
+                </Text>
+                <Button variant="plain" url="/app/analytics">
+                  View Analytics →
+                </Button>
+              </InlineStack>
             </Box>
+            {recentTransactions.length > 0 ? (
+              <DataTable
+                columnContentTypes={[
+                  "text",
+                  "text",
+                  "numeric",
+                  "numeric",
+                  "text",
+                ]}
+                headings={["Customer", "Order", "Amount", "Cashback", "Date"]}
+                rows={recentTransactions.map((t) => [
+                  t.email,
+                  `#${t.orderId}`,
+                  fmt(t.amount),
+                  <Text key={t.id} as="span" tone="success">
+                    +{fmt(t.cashback)}
+                  </Text>,
+                  new Date(t.date).toLocaleDateString(),
+                ])}
+              />
+            ) : (
+              <Box padding="600">
+                <Text as="p" tone="subdued" alignment="center">
+                  No transactions yet. They'll appear here as orders come in.
+                </Text>
+              </Box>
+            )}
           </Card>
         </Layout.Section>
 
-        {/* What the Widget Does */}
+        {/* Quick actions */}
         <Layout.Section>
-          <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+          <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
             <Card>
-              <Box padding="400">
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingLg">
-                    What the Widget Shows
+              <Box padding="300">
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">Manage Tiers</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Configure cashback rates and spending thresholds
                   </Text>
-                  <List type="bullet">
-                    <List.Item>
-                      <Text as="span" fontWeight="semibold">Cashback Rate:</Text> Displays the customer's current tier percentage
-                    </List.Item>
-                    <List.Item>
-                      <Text as="span" fontWeight="semibold">Potential Earnings:</Text> Shows how much they'll earn from this purchase
-                    </List.Item>
-                    <List.Item>
-                      <Text as="span" fontWeight="semibold">Current Balance:</Text> Their available store credit (if logged in)
-                    </List.Item>
-                    <List.Item>
-                      <Text as="span" fontWeight="semibold">Tier Status:</Text> Current tier name and benefits
-                    </List.Item>
-                  </List>
-                  <Text as="p" tone="subdued">
-                    The widget automatically updates based on customer tier and product price.
-                  </Text>
+                  <Button url="/app/tiers" fullWidth>Tiers →</Button>
                 </BlockStack>
               </Box>
             </Card>
-
             <Card>
-              <Box padding="400">
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingLg">
-                    Setup Checklist
+              <Box padding="300">
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">Customers</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    View tiers, credit balances, and spending
                   </Text>
-                  {setupSteps.map((step, index) => (
-                    <div key={index} style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '12px',
-                      padding: '8px',
-                      background: step.completed ? '#f0fdf4' : '#fafafa',
-                      borderRadius: '8px'
-                    }}>
-                      <Icon 
-                        source={CheckCircleIcon} 
-                        tone={step.completed ? "success" : "subdued"}
-                      />
-                      <div style={{ flex: 1 }}>
-                        <Text as="p" fontWeight="semibold">
-                          {step.title}
-                        </Text>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {step.description}
-                        </Text>
-                      </div>
-                      {step.action && !step.completed && (
-                        <Button url={step.action} size="slim">
-                          Setup
-                        </Button>
-                      )}
-                    </div>
-                  ))}
+                  <Button url="/app/customers/tiers" fullWidth>Customers →</Button>
+                </BlockStack>
+              </Box>
+            </Card>
+            <Card>
+              <Box padding="300">
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">Import Orders</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Backfill cashback from historical orders
+                  </Text>
+                  <Button url="/app/import-orders" fullWidth>Import →</Button>
                 </BlockStack>
               </Box>
             </Card>
           </InlineGrid>
-        </Layout.Section>
-
-        {/* Quick Actions */}
-        <Layout.Section>
-          <Card>
-            <Box padding="400">
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingLg">
-                  Next Steps
-                </Text>
-                <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-                  <Button url="/app/tiers" fullWidth>
-                    Configure Tiers
-                  </Button>
-                  <Button url="/app/customers/tiers" fullWidth>
-                    Manage Customers
-                  </Button>
-                  <Button url="/app/dashboard" fullWidth>
-                    View Dashboard
-                  </Button>
-                  <Button url="/app/email/generator" fullWidth>
-                    Setup Emails
-                  </Button>
-                </InlineGrid>
-              </BlockStack>
-            </Box>
-          </Card>
-        </Layout.Section>
-
-        {/* Help Section */}
-        <Layout.Section>
-          <Card>
-            <Box padding="400">
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Need Help?
-                </Text>
-                <Text as="p" tone="subdued">
-                  If you're having trouble installing the widget or have questions about RewardsPro:
-                </Text>
-                <List type="bullet">
-                  <List.Item>Check our documentation for detailed guides</List.Item>
-                  <List.Item>Contact support at support@rewardspro.app</List.Item>
-                  <List.Item>Visit the Shopify App Store for FAQs</List.Item>
-                </List>
-              </BlockStack>
-            </Box>
-          </Card>
         </Layout.Section>
       </Layout>
     </Page>

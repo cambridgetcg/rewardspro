@@ -8,14 +8,16 @@ import {
   Text,
   BlockStack,
   InlineGrid,
+  InlineStack,
   Badge,
   Box,
   Divider,
   ProgressBar,
-  DataTable,
+  IndexTable,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { getAnalyticsDashboard } from "../services/analytics.server";
+import { HeroMetric } from "../components/HeroMetric";
 import { StatCard } from "../components/StatCard";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -24,17 +26,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json(data);
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
+function fmt(n: number) {
+  return `$${n.toFixed(2)}`;
 }
-
-function formatPercent(value: number): string {
-  return `${value.toFixed(1)}%`;
+function pct(n: number) {
+  return `${n.toFixed(1)}%`;
 }
 
 export default function Analytics() {
@@ -42,93 +38,95 @@ export default function Analytics() {
     useLoaderData<typeof loader>();
 
   return (
-    <Page
-      title="Analytics"
-      subtitle="Key metrics for your rewards program"
-    >
+    <Page title="Analytics">
       <Layout>
-        {/* ── Overview ── */}
+        {/* Hero: Member Revenue */}
         <Layout.Section>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingLg">
-              Overview
-            </Text>
-            <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="400">
-              <StatCard
-                title="Member Revenue"
-                value={formatCurrency(overview.memberRevenue)}
-              />
-              <StatCard
-                title="Revenue per Member"
-                value={formatCurrency(overview.revenuePerMember)}
-              />
-              <StatCard
-                title="MoM Growth"
-                value={formatPercent(overview.monthOverMonthGrowth)}
-                trend={overview.monthOverMonthGrowth > 0 ? "up" : "down"}
-                trendValue={
-                  (overview.monthOverMonthGrowth > 0 ? "+" : "") +
-                  formatPercent(overview.monthOverMonthGrowth)
-                }
-              />
-              <StatCard
-                title="Members"
-                value={String(overview.memberCount)}
-              />
-              <StatCard
-                title="Repeat Purchase Rate"
-                value={formatPercent(overview.repeatPurchaseRate)}
-                trend={overview.repeatPurchaseRate > 50 ? "up" : "down"}
-              />
-              <StatCard
-                title="Purchases / Member / Year"
-                value={overview.purchasesPerMemberPerYear.toFixed(1)}
-              />
-            </InlineGrid>
-          </BlockStack>
+          <HeroMetric
+            label="Member Revenue"
+            value={fmt(overview.memberRevenue)}
+            change={
+              overview.monthOverMonthGrowth !== 0
+                ? {
+                    value: pct(Math.abs(overview.monthOverMonthGrowth)),
+                    trend: overview.monthOverMonthGrowth > 0 ? "up" : "down",
+                  }
+                : undefined
+            }
+            aside={[
+              { label: "Per Member", value: fmt(overview.revenuePerMember) },
+              { label: "Members", value: String(overview.memberCount) },
+              { label: "Repeat Rate", value: pct(overview.repeatPurchaseRate) },
+            ]}
+          />
+        </Layout.Section>
+
+        {/* Supporting metrics */}
+        <Layout.Section>
+          <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
+            <StatCard
+              title="Purchases / Member / Year"
+              value={overview.purchasesPerMemberPerYear.toFixed(1)}
+            />
+            <StatCard
+              title="Credit Earned (30d)"
+              value={fmt(overview.creditEarnedThisPeriod)}
+            />
+            <StatCard
+              title="Outstanding Liability"
+              value={fmt(overview.outstandingLiability)}
+            />
+          </InlineGrid>
         </Layout.Section>
 
         <Layout.Section>
           <Divider />
         </Layout.Section>
 
-        {/* ── Tier Performance ── */}
+        {/* Tier Performance */}
         <Layout.Section>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingLg">
-              Tier Performance
-            </Text>
-
-            <Card>
-              <Box padding="400">
-                <DataTable
-                  columnContentTypes={[
-                    "text",
-                    "numeric",
-                    "numeric",
-                    "numeric",
-                    "numeric",
-                    "numeric",
-                    "text",
-                  ]}
-                  headings={[
-                    "Tier",
-                    "Customers",
-                    "% of Base",
-                    "Avg Annual Spend",
-                    "AOV",
-                    "Retention",
-                    "Health",
-                  ]}
-                  rows={tierActivity.tierMetrics.map((tier) => [
-                    tier.tierName,
-                    String(tier.totalCustomers),
-                    formatPercent(tier.percentOfBase),
-                    formatCurrency(tier.avgAnnualSpend),
-                    formatCurrency(tier.avgOrderValue),
-                    formatPercent(tier.retentionRate),
+          <Card padding="0">
+            <Box padding="300">
+              <Text as="h2" variant="headingMd">
+                Tier Performance
+              </Text>
+            </Box>
+            <IndexTable
+              resourceName={{ singular: "tier", plural: "tiers" }}
+              itemCount={tierActivity.tierMetrics.length}
+              headings={[
+                { title: "Tier" },
+                { title: "Customers", alignment: "end" },
+                { title: "% of Base", alignment: "end" },
+                { title: "Avg Spend", alignment: "end" },
+                { title: "AOV", alignment: "end" },
+                { title: "Retention", alignment: "end" },
+                { title: "Health" },
+              ]}
+              selectable={false}
+            >
+              {tierActivity.tierMetrics.map((tier, i) => (
+                <IndexTable.Row id={tier.tierId} key={tier.tierId} position={i}>
+                  <IndexTable.Cell>
+                    <Text as="span" fontWeight="semibold">{tier.tierName}</Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" alignment="end">{tier.totalCustomers}</Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" alignment="end">{pct(tier.percentOfBase)}</Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" alignment="end">{fmt(tier.avgAnnualSpend)}</Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" alignment="end">{fmt(tier.avgOrderValue)}</Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" alignment="end">{pct(tier.retentionRate)}</Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell>
                     <Badge
-                      key={tier.tierId}
                       tone={
                         tier.retentionRate > 70
                           ? "success"
@@ -137,159 +135,87 @@ export default function Analytics() {
                             : "critical"
                       }
                     >
-                      {tier.retentionRate > 70
-                        ? "High"
-                        : tier.retentionRate > 50
-                          ? "Medium"
-                          : "Low"}
-                    </Badge>,
-                  ])}
-                />
+                      {tier.retentionRate > 70 ? "High" : tier.retentionRate > 50 ? "Medium" : "Low"}
+                    </Badge>
+                  </IndexTable.Cell>
+                </IndexTable.Row>
+              ))}
+            </IndexTable>
+          </Card>
+        </Layout.Section>
+
+        {/* Movement + Revenue side by side */}
+        <Layout.Section>
+          <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+            <Card>
+              <Box padding="300">
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">Movement (30d)</Text>
+                  <InlineGrid columns={2} gap="300">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Upgraded</Text>
+                      <Text as="p" variant="headingLg" fontWeight="bold" tone="success">
+                        {tierActivity.tierMovement.upgradedCount}
+                      </Text>
+                    </BlockStack>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Downgraded</Text>
+                      <Text as="p" variant="headingLg" fontWeight="bold" tone="critical">
+                        {tierActivity.tierMovement.downgradedCount}
+                      </Text>
+                    </BlockStack>
+                  </InlineGrid>
+                </BlockStack>
               </Box>
             </Card>
 
-            {/* Tier movement + revenue side by side */}
-            <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
-              <Card>
-                <Box padding="400">
-                  <BlockStack gap="300">
-                    <Text as="h3" variant="headingMd">
-                      Movement (30 days)
-                    </Text>
-                    <InlineGrid columns={2} gap="400">
-                      <BlockStack gap="200">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          Upgraded
+            <Card>
+              <Box padding="300">
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingMd">Revenue by Tier</Text>
+                  {tierActivity.tierRevenue.map((t) => (
+                    <BlockStack gap="050" key={t.tierId}>
+                      <InlineStack align="space-between">
+                        <Text as="p" variant="bodySm">{t.tierName}</Text>
+                        <Text as="p" variant="bodySm" fontWeight="semibold">
+                          {pct(t.percentOfTotalRevenue)}
                         </Text>
-                        <Text
-                          as="p"
-                          variant="headingLg"
-                          fontWeight="bold"
-                          tone="success"
-                        >
-                          {tierActivity.tierMovement.upgradedCount}
-                        </Text>
-                      </BlockStack>
-                      <BlockStack gap="200">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          Downgraded
-                        </Text>
-                        <Text
-                          as="p"
-                          variant="headingLg"
-                          fontWeight="bold"
-                          tone="critical"
-                        >
-                          {tierActivity.tierMovement.downgradedCount}
-                        </Text>
-                      </BlockStack>
-                    </InlineGrid>
-                  </BlockStack>
-                </Box>
-              </Card>
-
-              <Card>
-                <Box padding="400">
-                  <BlockStack gap="300">
-                    <Text as="h3" variant="headingMd">
-                      Revenue by Tier
-                    </Text>
-                    {tierActivity.tierRevenue.map((tier) => (
-                      <BlockStack gap="100" key={tier.tierId}>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
-                        >
-                          <Text as="p" variant="bodySm">
-                            {tier.tierName}
-                          </Text>
-                          <Text
-                            as="p"
-                            variant="bodySm"
-                            fontWeight="semibold"
-                          >
-                            {formatPercent(tier.percentOfTotalRevenue)}
-                          </Text>
-                        </div>
-                        <ProgressBar
-                          progress={tier.percentOfTotalRevenue}
-                          size="small"
-                        />
-                      </BlockStack>
-                    ))}
-                  </BlockStack>
-                </Box>
-              </Card>
-            </InlineGrid>
-          </BlockStack>
+                      </InlineStack>
+                      <ProgressBar progress={t.percentOfTotalRevenue} size="small" />
+                    </BlockStack>
+                  ))}
+                </BlockStack>
+              </Box>
+            </Card>
+          </InlineGrid>
         </Layout.Section>
 
         <Layout.Section>
           <Divider />
         </Layout.Section>
 
-        {/* ── Store Credit Health ── */}
+        {/* Store Credit */}
         <Layout.Section>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingLg">
-              Store Credit
-            </Text>
-            <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="400">
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Store Credit</Text>
+            <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="300">
+              <StatCard title="Total Earned" value={fmt(storeCredit.totalEarned)} />
+              <StatCard title="Earned (30d)" value={fmt(storeCredit.currentPeriodEarned)} />
+              <StatCard title="Avg / Transaction" value={fmt(storeCredit.avgPerTransaction)} />
               <StatCard
-                title="Total Earned"
-                value={formatCurrency(storeCredit.totalEarned)}
-              />
-              <StatCard
-                title="Earned (30 days)"
-                value={formatCurrency(storeCredit.currentPeriodEarned)}
-              />
-              <StatCard
-                title="Avg per Transaction"
-                value={formatCurrency(storeCredit.avgPerTransaction)}
-              />
-              <StatCard
-                title="Total Redeemed"
-                value={formatCurrency(storeCredit.totalRedeemed)}
+                title="Redeemed"
+                value={fmt(storeCredit.totalRedeemed)}
               />
               <StatCard
                 title="Redemption Rate"
-                value={formatPercent(storeCredit.redemptionRate)}
+                value={pct(storeCredit.redemptionRate)}
                 trend={storeCredit.redemptionRate > 50 ? "up" : "down"}
               />
               <StatCard
-                title="Outstanding Liability"
-                value={formatCurrency(storeCredit.outstandingLiability)}
+                title="Liability"
+                value={fmt(storeCredit.outstandingLiability)}
               />
             </InlineGrid>
-
-            <Card>
-              <Box padding="400">
-                <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Members with Balance
-                    </Text>
-                    <Text as="p" variant="headingMd" fontWeight="bold">
-                      {storeCredit.membersWithBalance}
-                    </Text>
-                    <Badge>
-                      {formatPercent(storeCredit.percentMembersWithBalance)}
-                    </Badge>
-                  </BlockStack>
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Credit Orders (30 days)
-                    </Text>
-                    <Text as="p" variant="headingMd" fontWeight="bold">
-                      {storeCredit.ordersUsingCredits}
-                    </Text>
-                  </BlockStack>
-                </InlineGrid>
-              </Box>
-            </Card>
           </BlockStack>
         </Layout.Section>
       </Layout>
