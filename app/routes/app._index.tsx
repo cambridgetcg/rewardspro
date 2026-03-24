@@ -26,16 +26,16 @@ import {
   ViewIcon,
 } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import prisma from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   
   // Get basic stats to show setup progress
   const [hasCustomers, hasTiers, hasTransactions] = await Promise.all([
-    db.customer.count().then(count => count > 0),
-    db.tier.count({ where: { shopDomain: session.shop } }).then(count => count > 0),
-    db.cashbackTransaction.count().then(count => count > 0),
+    prisma.customer.count().then(count => count > 0),
+    prisma.tier.count({ where: { shopDomain: session.shop } }).then(count => count > 0),
+    prisma.cashbackTransaction.count().then(count => count > 0),
   ]);
 
   const setupProgress = {

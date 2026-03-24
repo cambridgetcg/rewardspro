@@ -1,5 +1,5 @@
 // app/services/email.server.ts
-import db from "../db.server";
+import prisma from "../db.server";
 import type { 
   Customer,
   EmailTemplate,
@@ -47,7 +47,7 @@ export class EmailService {
     
     try {
       // Get customer details with relations
-      const customer = await db.customer.findUnique({
+      const customer = await prisma.customer.findUnique({
         where: { id: customerId },
         include: {
           emailPreferences: true,
@@ -78,7 +78,7 @@ export class EmailService {
       const emailContent = await this.prepareEmailContent(template, customer, customData, shopDomain);
       
       // Create email log entry
-      const emailLog = await db.emailLog.create({
+      const emailLog = await prisma.emailLog.create({
         data: {
           shopDomain,
           customerId,
@@ -100,7 +100,7 @@ export class EmailService {
       const sent = await this.sendViaEmailProvider(emailContent, shopDomain);
       
       // Update email log
-      await db.emailLog.update({
+      await prisma.emailLog.update({
         where: { id: emailLog.id },
         data: {
           status: sent ? "SENT" : "FAILED",
@@ -111,7 +111,7 @@ export class EmailService {
       
       // Update template test count if in test mode
       if (customData?._isTest) {
-        await db.emailTemplate.update({
+        await prisma.emailTemplate.update({
           where: { id: template.id },
           data: { testEmailsSent: { increment: 1 } }
         });
@@ -169,7 +169,7 @@ export class EmailService {
     const tierId = customer.membershipHistory[0]?.tierId;
     
     if (tierId) {
-      const tierSpecificTemplate = await db.emailTemplate.findFirst({
+      const tierSpecificTemplate = await prisma.emailTemplate.findFirst({
         where: {
           shopDomain,
           type: templateType,
@@ -186,7 +186,7 @@ export class EmailService {
     // For example: "vip" for high spenders, "inactive" for dormant customers
     
     // Fall back to general template
-    return db.emailTemplate.findFirst({
+    return prisma.emailTemplate.findFirst({
       where: {
         shopDomain,
         type: templateType,
@@ -207,7 +207,7 @@ export class EmailService {
     shopDomain?: string
   ): Promise<EmailContent> {
     // Get shop info for replacements
-    const shop = await db.onboarding.findFirst({
+    const shop = await prisma.onboarding.findFirst({
       where: { shopDomain: template.shopDomain }
     });
     
@@ -586,15 +586,15 @@ export class EmailService {
     }
     
     const [totalSent, totalOpened, totalClicked, byType, byStatus] = await Promise.all([
-      db.emailLog.count({ where: { ...where, status: "SENT" } }),
-      db.emailLog.count({ where: { ...where, openedAt: { not: null } } }),
-      db.emailLog.count({ where: { ...where, clickedAt: { not: null } } }),
-      db.emailLog.groupBy({
+      prisma.emailLog.count({ where: { ...where, status: "SENT" } }),
+      prisma.emailLog.count({ where: { ...where, openedAt: { not: null } } }),
+      prisma.emailLog.count({ where: { ...where, clickedAt: { not: null } } }),
+      prisma.emailLog.groupBy({
         by: ['templateType'],
         where,
         _count: true
       }),
-      db.emailLog.groupBy({
+      prisma.emailLog.groupBy({
         by: ['status'],
         where,
         _count: true
@@ -625,7 +625,7 @@ export class EmailService {
     shopDomain: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      const template = await db.emailTemplate.findUnique({
+      const template = await prisma.emailTemplate.findUnique({
         where: { id: templateId }
       });
       

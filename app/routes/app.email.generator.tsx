@@ -33,7 +33,7 @@ import {
   EditIcon,
 } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import prisma from "../db.server";
 import type { EmailTemplate as PrismaEmailTemplate } from "@prisma/client";
 
 // Helper function to convert HSB to Hex
@@ -217,7 +217,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
   
   // Fetch existing templates
-  const templates = await db.emailTemplate.findMany({
+  const templates = await prisma.emailTemplate.findMany({
     where: { 
       shopDomain: session.shop,
       customerSegment: null, // Only show general templates
@@ -313,7 +313,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     
     try {
       // Check if template already exists for this type/tone combination
-      const existingTemplate = await db.emailTemplate.findFirst({
+      const existingTemplate = await prisma.emailTemplate.findFirst({
         where: {
           shopDomain: session.shop,
           type: emailType,
@@ -324,7 +324,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       
       const template = existingTemplate
-        ? await db.emailTemplate.update({
+        ? await prisma.emailTemplate.update({
             where: { id: existingTemplate.id },
             data: {
               subject,
@@ -341,7 +341,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               lastModifiedBy: session.id,
             },
           })
-        : await db.emailTemplate.create({
+        : await prisma.emailTemplate.create({
             data: {
               shopDomain: session.shop,
               type: emailType,
@@ -380,7 +380,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const templateId = formData.get("templateId") as string;
     
     try {
-      await db.emailTemplate.delete({
+      await prisma.emailTemplate.delete({
         where: { id: templateId },
       });
       
@@ -401,7 +401,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const enabled = formData.get("enabled") === "true";
     
     try {
-      await db.emailTemplate.update({
+      await prisma.emailTemplate.update({
         where: { id: templateId },
         data: { enabled: !enabled },
       });
@@ -432,7 +432,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const primaryColor = formData.get("primaryColor") as string;
     
     try {
-      await db.emailTemplate.update({
+      await prisma.emailTemplate.update({
         where: { id: templateId },
         data: {
           subject,

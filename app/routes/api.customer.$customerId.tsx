@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import prisma from "../db.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, cors } = await authenticate.public(request);
@@ -11,7 +11,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   try {
-    const customer = await db.customer.findUnique({
+    const customer = await prisma.customer.findUnique({
       where: { shopifyCustomerId: params.customerId },
       include: {
         transactions: {

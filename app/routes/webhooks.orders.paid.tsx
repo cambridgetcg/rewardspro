@@ -1,7 +1,7 @@
 // app/routes/webhooks.orders.paid.tsx
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import prisma from "../db.server";
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -186,7 +186,7 @@ async function calculateCashback(
   eligibleAmount: number
 ): Promise<{ amount: number; percentage: number; tierName: string | null }> {
   // Get customer's tier information
-  const membership = await db.customerMembership.findFirst({
+  const membership = await prisma.customerMembership.findFirst({
     where: {
       customerId,
       isActive: true
@@ -303,9 +303,9 @@ async function recordCashbackTransaction(
   shopifyTransactionId?: string
 ) {
   // Use a transaction to ensure atomicity
-  const [transaction, updatedCustomer] = await db.$transaction([
+  const [transaction, updatedCustomer] = await prisma.$transaction([
     // Create cashback transaction record
-    db.cashbackTransaction.create({
+    prisma.cashbackTransaction.create({
       data: {
         shopDomain,
         customerId,
@@ -318,7 +318,7 @@ async function recordCashbackTransaction(
       }
     }),
     // Update customer balance
-    db.customer.update({
+    prisma.customer.update({
       where: { id: customerId },
       data: {
         storeCredit: { increment: cashbackAmount },
@@ -374,7 +374,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     
     // Check for duplicate processing
-    const existingTransaction = await db.cashbackTransaction.findUnique({
+    const existingTransaction = await prisma.cashbackTransaction.findUnique({
       where: { 
         shopDomain_shopifyOrderId: {
           shopDomain: shop,
@@ -389,7 +389,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     
     // Find or create customer
-    let customer = await db.customer.findUnique({
+    let customer = await prisma.customer.findUnique({
       where: { 
         shopDomain_shopifyCustomerId: {
           shopDomain: shop,
@@ -400,7 +400,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     
     if (!customer) {
       console.log("👤 Creating new customer record");
-      customer = await db.customer.create({
+      customer = await prisma.customer.create({
         data: {
           shopDomain: shop,
           shopifyCustomerId: customerId,
@@ -412,7 +412,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       
       // Assign initial tier
       const defaultTierId = await getDefaultTierId(shop);
-      await db.customerMembership.create({
+      await prisma.customerMembership.create({
         data: {
           customerId: customer.id,
           tierId: defaultTierId,
@@ -421,7 +421,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       
       // Log the initial tier assignment
-      await db.tierChangeLog.create({
+      await prisma.tierChangeLog.create({
         data: {
           customerId: customer.id,
           fromTierId: null, // No previous tier
@@ -556,7 +556,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 // ============================================================================
 
 async function getDefaultTierId(shopDomain: string): Promise<string> {
-  const defaultTier = await db.tier.findFirst({
+  const defaultTier = await prisma.tier.findFirst({
     where: {
       shopDomain,
       isActive: true,
@@ -575,66 +575,57 @@ async function getDefaultTierId(shopDomain: string): Promise<string> {
 }
 
 async function evaluateTierUpgrade(customerId: string, shopDomain: string) {
-  // Get customer's spending based on evaluation period
-  const analytics = await db.customerAnalytics.findUnique({
-    where: { customerId }
+  // Parallel: fetch analytics + current membership in one round-trip
+  const [analytics, currentMembership] = await Promise.all([
+    prisma.customerAnalytics.findUnique({ where: { customerId } }),
+    prisma.customerMembership.findFirst({
+      where: { customerId, isActive: true },
+      include: { tier: true },
+    }),
+  ]);
+
+  if (!analytics || !currentMembership) return;
+
+  const spendingAmount =
+    currentMembership.tier.evaluationPeriod === "LIFETIME"
+      ? analytics.lifetimeSpending
+      : analytics.yearlySpending;
+
+  const eligibleTier = await prisma.tier.findFirst({
+    where: { shopDomain, isActive: true, minSpend: { lte: spendingAmount } },
+    orderBy: { minSpend: "desc" },
   });
-  
-  if (!analytics) return;
-  
-  const currentMembership = await db.customerMembership.findFirst({
-    where: { customerId, isActive: true },
-    include: { tier: true }
-  });
-  
-  if (!currentMembership) return;
-  
-  // Find eligible tier based on spending
-  const spendingAmount = currentMembership.tier.evaluationPeriod === 'LIFETIME' 
-    ? analytics.lifetimeSpending 
-    : analytics.yearlySpending;
-  
-  const eligibleTier = await db.tier.findFirst({
-    where: {
-      shopDomain,
-      isActive: true,
-      minSpend: { lte: spendingAmount }
-    },
-    orderBy: {
-      minSpend: 'desc'
-    }
-  });
-  
-  // Upgrade if eligible for higher tier
+
+  // All tier-change writes in one transaction
   if (eligibleTier && eligibleTier.id !== currentMembership.tierId) {
-    // Deactivate current membership
-    await db.customerMembership.update({
-      where: { id: currentMembership.id },
-      data: { isActive: false, endDate: new Date() }
-    });
-    
-    // Create new membership
-    await db.customerMembership.create({
-      data: {
-        customerId,
-        tierId: eligibleTier.id,
-        assignmentType: "AUTOMATIC",
-        previousTierId: currentMembership.tierId
-      }
-    });
-    
-    // Log tier change
-    await db.tierChangeLog.create({
-      data: {
-        customerId,
-        fromTierId: currentMembership.tierId,
-        toTierId: eligibleTier.id,
-        changeType: "AUTOMATIC_UPGRADE",
-        triggeredBy: "SYSTEM",
-        metadata: { spendingAmount, evaluationPeriod: currentMembership.tier.evaluationPeriod }
-      }
-    });
-    
+    await prisma.$transaction([
+      prisma.customerMembership.update({
+        where: { id: currentMembership.id },
+        data: { isActive: false, endDate: new Date() },
+      }),
+      prisma.customerMembership.create({
+        data: {
+          customerId,
+          tierId: eligibleTier.id,
+          assignmentType: "AUTOMATIC",
+          previousTierId: currentMembership.tierId,
+        },
+      }),
+      prisma.tierChangeLog.create({
+        data: {
+          customerId,
+          fromTierId: currentMembership.tierId,
+          toTierId: eligibleTier.id,
+          changeType: "AUTOMATIC_UPGRADE",
+          triggeredBy: "SYSTEM",
+          metadata: {
+            spendingAmount,
+            evaluationPeriod: currentMembership.tier.evaluationPeriod,
+          },
+        },
+      }),
+    ]);
+
     console.log(`   🎉 Tier upgraded: ${currentMembership.tier.name} → ${eligibleTier.name}`);
   }
 }
