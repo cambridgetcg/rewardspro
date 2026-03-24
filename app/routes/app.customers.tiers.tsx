@@ -18,7 +18,6 @@ import {
   BlockStack,
   Text,
   Banner,
-  Modal,
   EmptySearchResult,
   Box,
   InlineStack,
@@ -163,7 +162,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shopDomain = session.shop;
   const formData = await request.formData();
   const actionType = formData.get("actionType") as string;
@@ -188,76 +187,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  if (actionType === "credit") {
-    const customerId = formData.get("customerId") as string;
-    const amount = parseFloat(formData.get("amount") as string);
-    const creditAction = formData.get("creditAction") as string;
-
-    if (!customerId || !amount || amount <= 0) {
-      return json({ success: false, error: "Invalid amount" });
-    }
-
-    try {
-      const customer = await prisma.customer.findUnique({ where: { id: customerId } });
-      if (!customer || customer.shopDomain !== shopDomain) throw new Error("Not found");
-
-      const mutation = creditAction === "add"
-        ? `#graphql
-          mutation c($id: ID!, $i: StoreCreditAccountCreditInput!) {
-            storeCreditAccountCredit(id: $id, creditInput: $i) {
-              storeCreditAccountTransaction { id } userErrors { message }
-            }
-          }`
-        : `#graphql
-          mutation d($id: ID!, $i: StoreCreditAccountDebitInput!) {
-            storeCreditAccountDebit(id: $id, debitInput: $i) {
-              storeCreditAccountTransaction { id } userErrors { message }
-            }
-          }`;
-
-      const inputKey = creditAction === "add" ? "creditAmount" : "debitAmount";
-      const resp = await admin.graphql(mutation, {
-        variables: {
-          id: `gid://shopify/Customer/${customer.shopifyCustomerId}`,
-          i: { [inputKey]: { amount: amount.toFixed(2), currencyCode: "USD" } },
-        },
-      });
-      const gql = await resp.json();
-      const res = creditAction === "add"
-        ? gql.data?.storeCreditAccountCredit
-        : gql.data?.storeCreditAccountDebit;
-
-      if (res?.userErrors?.length > 0) throw new Error(res.userErrors[0].message);
-
-      const delta = creditAction === "add" ? amount : -amount;
-      await prisma.$transaction([
-        prisma.storeCreditLedger.create({
-          data: {
-            customerId, shopDomain, amount: delta,
-            balance: customer.storeCredit + delta,
-            type: "MANUAL_ADJUSTMENT", source: "APP_MANUAL",
-            shopifyReference: res?.storeCreditAccountTransaction?.id,
-            description: `Manual ${creditAction}`, reconciledAt: new Date(),
-          },
-        }),
-        prisma.customer.update({
-          where: { id: customerId },
-          data: { storeCredit: customer.storeCredit + delta },
-        }),
-      ]);
-
-      return json({
-        success: true,
-        message: `$${amount.toFixed(2)} ${creditAction === "add" ? "added to" : "removed from"} ${customer.email}`,
-      });
-    } catch (error) {
-      return json({
-        success: false,
-        error: error instanceof Error ? error.message : "Failed",
-      });
-    }
-  }
-
   return json({ success: false, error: "Unknown action" });
 };
 
@@ -274,10 +203,7 @@ export default function Customers() {
   const submit = useSubmit();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [modalActive, setModalActive] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
-  const [creditAction, setCreditAction] = useState<"add" | "remove">("add");
-  const [creditAmount, setCreditAmount] = useState("");
+
   const [bannerVisible, setBannerVisible] = useState(false);
 
   const isSubmitting = navigation.state === "submitting";
@@ -285,8 +211,6 @@ export default function Customers() {
   useEffect(() => {
     if (actionData) {
       setBannerVisible(true);
-      setModalActive(false);
-      setCreditAmount("");
       if (actionData.success) {
         const t = setTimeout(() => setBannerVisible(false), 5000);
         return () => clearTimeout(t);
@@ -396,7 +320,6 @@ export default function Customers() {
                 { title: "Tier" },
                 { title: "Store Credit", alignment: "end" },
                 { title: "Annual Spending", alignment: "end" },
-                { title: "" },
               ]}
               selectable={false}
               emptyState={
@@ -441,50 +364,7 @@ export default function Customers() {
                       {formatCurrency(c.annualSpending)}
                     </Text>
                   </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <InlineStack gap="200" align="end">
-                      <button
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "#2e7d32",
-                          cursor: "pointer",
-                          fontSize: "13px",
-                          fontWeight: 500,
-                          padding: "4px 8px",
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedCustomer(c);
-                          setCreditAction("add");
-                          setModalActive(true);
-                        }}
-                      >
-                        + Add
-                      </button>
-                      <button
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: c.storeCredit > 0 ? "#c62828" : "#ccc",
-                          cursor: c.storeCredit > 0 ? "pointer" : "default",
-                          fontSize: "13px",
-                          fontWeight: 500,
-                          padding: "4px 8px",
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (c.storeCredit > 0) {
-                            setSelectedCustomer(c);
-                            setCreditAction("remove");
-                            setModalActive(true);
-                          }
-                        }}
-                      >
-                        − Remove
-                      </button>
-                    </InlineStack>
-                  </IndexTable.Cell>
+
                 </IndexTable.Row>
               ))}
             </IndexTable>
@@ -508,46 +388,7 @@ export default function Customers() {
         </Layout.Section>
       </Layout>
 
-      {/* Credit Modal */}
-      <Modal
-        open={modalActive}
-        onClose={() => setModalActive(false)}
-        title={`${creditAction === "add" ? "Add" : "Remove"} Credit — ${selectedCustomer?.email}`}
-        primaryAction={{
-          content: creditAction === "add" ? "Add Credit" : "Remove Credit",
-          destructive: creditAction === "remove",
-          loading: isSubmitting,
-          disabled: !creditAmount || parseFloat(creditAmount) <= 0,
-          onAction: () => {
-            if (!selectedCustomer || !creditAmount) return;
-            const fd = new FormData();
-            fd.append("actionType", "credit");
-            fd.append("customerId", selectedCustomer.id);
-            fd.append("amount", creditAmount);
-            fd.append("creditAction", creditAction);
-            submit(fd, { method: "post" });
-          },
-        }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setModalActive(false) }]}
-      >
-        <Modal.Section>
-          <BlockStack gap="300">
-            <Text as="p">
-              Current balance: {formatCurrency(selectedCustomer?.storeCredit || 0)}
-            </Text>
-            <TextField
-              label="Amount (USD)"
-              type="number"
-              value={creditAmount}
-              onChange={setCreditAmount}
-              placeholder="0.00"
-              min="0.01"
-              step={0.01}
-              autoComplete="off"
-            />
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
+
     </Page>
   );
 }
