@@ -22,156 +22,67 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        {/* Hero Section */}
         <div className={styles.hero}>
-          <h1 className={styles.heading}>
-            Turn Every Purchase Into Loyalty with RewardsPro
-          </h1>
+          <h1 className={styles.heading}>Reward rules and records</h1>
           <p className={styles.tagline}>
-            The intelligent cashback system that drives repeat purchases and increases customer lifetime value. 
-            Reward your best customers automatically.
+            View Shopify cashback rules, customer balances and the orders behind them.
           </p>
         </div>
 
-        {/* Login Form */}
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
             <label className={styles.label}>
               <span>Shop domain</span>
-              <input 
-                className={styles.input} 
-                type="text" 
-                name="shop" 
+              <input
+                className={styles.input}
+                type="text"
+                name="shop"
                 placeholder="my-shop.myshopify.com"
-                required 
+                required
               />
               <span className={styles.hint}>Enter your Shopify store domain</span>
             </label>
-            <button className={styles.button} type="submit">
-              Start Free Trial
-            </button>
+            <button className={styles.button} type="submit">Open the app</button>
           </Form>
         )}
 
-        {/* Key Benefits */}
         <div className={styles.benefits}>
-          <h2 className={styles.sectionTitle}>Why Merchants Choose RewardsPro</h2>
+          <h2 className={styles.sectionTitle}>Programme records</h2>
           <ul className={styles.list}>
             <li>
-              <strong>🎯 Smart Tier System</strong>
-              <p>Automatically segment customers into tiers based on spending. Reward your VIPs with higher cashback rates.</p>
+              <strong>Tier rules</strong>
+              <p>Inspect spending thresholds and the cashback rate assigned to each tier.</p>
             </li>
             <li>
-              <strong>💰 Boost Repeat Purchases</strong>
-              <p>Customers with store credit return 2.7x more often. Watch your retention rates soar.</p>
+              <strong>Store credit</strong>
+              <p>Follow purchases, earned credit, redemptions and refund adjustments.</p>
             </li>
             <li>
-              <strong>⚡ Seamless Integration</strong>
-              <p>Works instantly with Shopify's native store credit system. No complex setup or customer accounts needed.</p>
-            </li>
-            <li>
-              <strong>📊 Real-Time Analytics</strong>
-              <p>Track cashback earned, tier progression, and customer engagement from one intuitive dashboard.</p>
+              <strong>Activity</strong>
+              <p>Read recorded order amounts, rewards and tier changes in the dashboard.</p>
             </li>
           </ul>
         </div>
 
-        {/* How It Works */}
-        <div className={styles.howItWorks}>
-          <h2 className={styles.sectionTitle}>How It Works</h2>
-          <ol className={styles.steps}>
-            <li>
-              <strong>Set Your Tiers</strong>
-              <p>Create cashback tiers (e.g., Bronze 2%, Silver 5%, Gold 10%)</p>
-            </li>
-            <li>
-              <strong>Add Widget to Theme</strong>
-              <p>Install the RewardsPro widget to display cashback info on your store</p>
-            </li>
-            <li>
-              <strong>Customers Shop & Earn</strong>
-              <p>Cashback automatically calculates and applies as store credit</p>
-            </li>
-            <li>
-              <strong>Watch Loyalty Grow</strong>
-              <p>Customers return to spend their rewards and earn more</p>
-            </li>
-          </ol>
-        </div>
-        
-        {/* Widget Installation CTA */}
         <div className={styles.widgetCTA}>
-          <h2 className={styles.sectionTitle}>⚡ Quick Setup Required</h2>
-          <div className={styles.widgetContent}>
-            <p className={styles.widgetText}>
-              After installing RewardsPro, add our widget to your store theme to display cashback rates and rewards to customers.
-            </p>
-            <div className={styles.widgetSteps}>
-              <div className={styles.widgetStep}>
-                <span className={styles.stepNumber}>1</span>
-                <div>
-                  <strong>Install RewardsPro</strong>
-                  <p>Complete the app installation first</p>
-                </div>
-              </div>
-              <div className={styles.widgetStep}>
-                <span className={styles.stepNumber}>2</span>
-                <div>
-                  <strong>Go to Theme Customizer</strong>
-                  <p>Navigate to Online Store → Themes → Customize</p>
-                </div>
-              </div>
-              <div className={styles.widgetStep}>
-                <span className={styles.stepNumber}>3</span>
-                <div>
-                  <strong>Add RewardsPro Widget</strong>
-                  <p>Add app block to product pages to show cashback rates</p>
-                </div>
-              </div>
-            </div>
-            <p className={styles.widgetNote}>
-              The widget displays tier-based cashback percentages and helps customers track their rewards directly on product pages.
-            </p>
-          </div>
-        </div>
-
-        {/* Trust Indicators */}
-        <div className={styles.trust}>
-          <div className={styles.trustItems}>
-            <span>✓ GDPR Compliant</span>
-            <span>✓ 24/7 Support</span>
-            <span>✓ No Transaction Fees</span>
-            <span>✓ Free 14-Day Trial</span>
-          </div>
-        </div>
-
-        {/* FAQ Section */}
-        <div className={styles.faq}>
-          <h2 className={styles.sectionTitle}>Frequently Asked Questions</h2>
-          <details className={styles.faqItem}>
-            <summary>How does the cashback appear to customers?</summary>
-            <p>Cashback is automatically added as Shopify store credit after each purchase. Customers see it in their account and can apply it at checkout.</p>
-          </details>
-          <details className={styles.faqItem}>
-            <summary>Can I customize cashback percentages?</summary>
-            <p>Yes! Set different cashback rates for each tier. You have complete control over percentages and tier thresholds.</p>
-          </details>
-          <details className={styles.faqItem}>
-            <summary>Does it work with existing loyalty programs?</summary>
-            <p>RewardsPro complements points-based programs perfectly. Use points for engagement, cashback for retention.</p>
-          </details>
-          <details className={styles.faqItem}>
-            <summary>What about refunds and returns?</summary>
-            <p>Cashback is automatically adjusted when orders are refunded, keeping your accounting accurate.</p>
-          </details>
-        </div>
-
-        {/* Bottom CTA */}
-        <div className={styles.bottomCta}>
-          <h3>Ready to increase customer retention?</h3>
-          <p className={styles.ctaText}>
-            Join hundreds of merchants using RewardsPro to build lasting customer relationships.
+          <h2 className={styles.sectionTitle}>Display reward information</h2>
+          <p className={styles.widgetText}>
+            In Shopify, open Online Store → Themes → Customize. Add the RewardsPro
+            app block to a product page to display its configured cashback rates.
+            Availability depends on your theme and existing app setup.
           </p>
+        </div>
+
+        <div className={styles.faq}>
+          <h2 className={styles.sectionTitle}>Balances and support</h2>
+          <details className={styles.faqItem}>
+            <summary>Where can customers see their cashback?</summary>
+            <p>Recorded credit appears in the customer account and can be applied to eligible purchases under the programme rules.</p>
+          </details>
+          <details className={styles.faqItem}>
+            <summary>What happens after a refund?</summary>
+            <p>Refund processing adjusts the corresponding reward. Inspect the order and credit history if the records disagree.</p>
+          </details>
         </div>
       </div>
     </div>
